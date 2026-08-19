@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Mail Dashboard · Executive Notes AI</title>
+    <style>
+        :root {
+            --bg-main: #f8fafc;
+            --border-color: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --danger: #dc2626;
+            --danger-bg: #fef2f2;
+            --warning: #d97706;
+            --warning-bg: #fffbeb;
+            --purple: #7c3aed;
+            --purple-bg: #faf5ff;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+        body { background-color: var(--bg-main); color: var(--text-primary); min-height: 100vh; display: flex; flex-direction: column; }
+        
+        header { background: #ffffff; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 40; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+        .header-container { max-width: 1320px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+        .header-title-box { display: flex; align-items: center; gap: 12px; }
+        .logo-icon { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #4f46e5, #7c3aed); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 900; font-size: 18px; box-shadow: 0 4px 10px rgba(79, 70, 229, 0.25); }
+        .header-title { font-size: 17px; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
+        .badge-tag { font-size: 10px; font-weight: 800; background: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 9999px; border: 1px solid #c7d2fe; }
+        .header-status { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+        
+        .btn-sync { background: var(--primary); color: #fff; border: none; padding: 8px 18px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(79, 70, 229, 0.2); }
+        .btn-sync:hover { background: var(--primary-hover); transform: translateY(-1px); }
+        .btn-sync:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        main { max-width: 1320px; margin: 0 auto; padding: 24px; width: 100%; display: flex; flex-direction: column; gap: 24px; flex: 1; }
+
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+        .kpi-card { background: #fff; border-radius: 16px; padding: 18px 20px; border: 1px solid var(--border-color); box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: transform 0.2s, box-shadow 0.2s; }
+        .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 8px 16px -4px rgba(0,0,0,0.06); }
+        .kpi-card.urgent { border-color: #fecaca; background: linear-gradient(145deg, #fff5f5, #ffffff); }
+        .kpi-card.reply { border-color: #e9d5ff; background: linear-gradient(145deg, #faf5ff, #ffffff); }
+        .kpi-card.dir { border-color: #fef08a; background: linear-gradient(145deg, #fffdf0, #ffffff); }
+        .kpi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+        .kpi-card.urgent .kpi-label { color: #dc2626; }
+        .kpi-card.reply .kpi-label { color: #7c3aed; }
+        .kpi-card.dir .kpi-label { color: #b45309; }
+        .kpi-card.neutral .kpi-label { color: #64748b; }
+        .kpi-value { font-size: 32px; font-weight: 900; color: #0f172a; line-height: 1.1; }
+
+        .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #1e293b; }
+        .pulse-dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; }
+
+        .top-focus-list { display: flex; flex-direction: column; gap: 12px; }
+        .top-card { background: #fff; border: 1px solid #fecaca; border-radius: 14px; overflow: hidden; box-shadow: 0 2px 6px rgba(220, 38, 38, 0.04); }
+        .top-card-header { padding: 14px 18px; background: linear-gradient(90deg, #fff5f5 0%, #ffffff 100%); display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; flex-wrap: wrap; }
+        .top-card-main { display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 280px; }
+        .btn-expand-icon { width: 28px; height: 28px; border-radius: 8px; background: #fee2e2; color: #dc2626; border: none; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; cursor: pointer; flex-shrink: 0; margin-top: 2px; }
+        .top-card-sender { font-size: 13px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .tag-p1 { font-size: 10px; font-weight: 800; background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 6px; border: 1px solid #fca5a5; }
+        .tag-new { font-size: 10px; font-weight: 800; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 6px; }
+        .top-card-subj { font-size: 13px; font-weight: 600; color: #334155; margin-top: 4px; }
+        .top-card-summary { font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.4; }
+        .top-card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        
+        .top-card-body { padding: 16px 20px; background: #f8fafc; border-top: 1px solid #f1f5f9; font-size: 13px; color: #334155; line-height: 1.6; }
+        .ai-box { background: #fff; border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 16px; margin-top: 8px; white-space: pre-line; }
+
+        .btn-lotus { background: #dc2626; color: #fff; border: none; padding: 7px 16px; border-radius: 8px; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s; box-shadow: 0 2px 4px rgba(220,38,38,0.25); }
+        .btn-lotus:hover { background: #b91c1c; transform: translateY(-1px); }
+        .btn-lotus-secondary { background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+        .btn-lotus-secondary:hover { background: #e2e8f0; color: #0f172a; }
+
+        .btn-read-toggle { background: #ffffff; border: 1px solid #cbd5e1; color: #475569; padding: 5px 12px; border-radius: 8px; font-size: 11px; font-weight: 700; cursor: pointer; transition: all 0.15s; }
+        .btn-read-toggle:hover { background: #f8fafc; border-color: #94a3b8; }
+        .btn-read-toggle.is-unread { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+        .btn-read-toggle.is-unread:hover { background: #4338ca; }
+
+        .table-card { background: #fff; border-radius: 16px; border: 1px solid var(--border-color); padding: 18px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 16px; }
+        .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+        .filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .btn-filter { background: #f8fafc; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 6px 14px; border-radius: 10px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+        .btn-filter:hover { background: #f1f5f9; }
+        .btn-filter.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+        .search-box { position: relative; min-width: 240px; }
+        .search-input { width: 100%; padding: 7px 12px 7px 30px; border-radius: 10px; border: 1px solid var(--border-color); background: #f8fafc; font-size: 12px; outline: none; }
+        .search-input:focus { border-color: var(--primary); background: #fff; }
+        .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: #94a3b8; }
+
+        .table-responsive { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 12px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+        thead { background: #f8fafc; border-bottom: 1px solid var(--border-color); }
+        th { padding: 12px 14px; font-weight: 700; color: #64748b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.3px; white-space: nowrap; }
+        td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; color: #334155; }
+        tr.unread-row { background: rgba(238, 242, 255, 0.55); font-weight: 600; }
+        tr.read-row:hover, tr.unread-row:hover { background: #f8fafc; cursor: pointer; }
+
+        .p-badge { display: inline-block; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px; text-align: center; }
+        .p-badge.p1 { background: #fee2e2; color: #b91c1c; }
+        .p-badge.p2 { background: #fef3c7; color: #b45309; }
+        .p-badge.p3 { background: #f1f5f9; color: #64748b; }
+
+        .tag-action { font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; display: inline-block; }
+        .tag-action.needs-reply { background: #f3e8ff; color: #7e22ce; border: 1px solid #d8b4fe; }
+        .tag-action.replied { background: #dcfce7; color: #15803d; }
+        .tag-action.none { color: #94a3b8; }
+
+        .empty-placeholder { padding: 36px; text-align: center; color: #94a3b8; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-container">
+            <div class="header-title-box">
+                <div class="logo-icon">✉</div>
+                <div>
+                    <div class="header-title">
+                        Smart Mail Dashboard
+                        <span class="badge-tag">Notes AI Triage</span>
+                    </div>
+                    <div class="header-status" id="lastSyncLabel">Готов к работе</div>
+                </div>
+            </div>
+            <button onclick="triggerFullSync()" id="btnSync" class="btn-sync">
+                <span id="syncIcon">↻</span>
+                <span id="syncText">Собрать и анализировать</span>
+            </button>
+        </div>
+    </header>
+
+    <main>
+        <!-- KPI Row -->
+        <section class="kpi-grid">
+            <div class="kpi-card urgent">
+                <div class="kpi-label">Горящие (P1 / E_TOP)</div>
+                <div class="kpi-value" id="kpiETop">-</div>
+            </div>
+            <div class="kpi-card reply">
+                <div class="kpi-label">Требуют ответа</div>
+                <div class="kpi-value" id="kpiNeedsReply">-</div>
+            </div>
+            <div class="kpi-card dir">
+                <div class="kpi-label">Контроль E_DIR</div>
+                <div class="kpi-value" id="kpiEDir">-</div>
+            </div>
+            <div class="kpi-card neutral">
+                <div class="kpi-label">Не прочитано</div>
+                <div class="kpi-value" id="kpiUnreadTotal">-</div>
+            </div>
+        </section>
+
+        <!-- TOP FOCUS -->
+        <section>
+            <div class="section-header">
+                <div class="pulse-dot"></div>
+                <span>Секция ТОП-Внимание (Горящие)</span>
+            </div>
+            <div id="topFocusContainer" class="top-focus-list"></div>
+        </section>
+
+        <!-- TABLE SECTION -->
+        <section class="table-card">
+            <div class="toolbar">
+                <div class="filters">
+                    <button onclick="setFilter('all')" id="filter-all" class="btn-filter active">Все письма</button>
+                    <button onclick="setFilter('urgent')" id="filter-urgent" class="btn-filter">🔥 Горящие (P1)</button>
+                    <button onclick="setFilter('needs_reply')" id="filter-needs_reply" class="btn-filter">⚡ Требуют ответа</button>
+                    <button onclick="setFilter('vip')" id="filter-vip" class="btn-filter">👑 E_TOP & E_DIR</button>
+                </div>
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="searchInput" onkeyup="renderDashboard()" placeholder="Поиск по теме, автору..." class="search-input">
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 32px; text-align: center;"></th>
+                            <th style="width: 120px;">Статус</th>
+                            <th style="width: 70px;">Приоритет</th>
+                            <th style="width: 220px;">Отправитель</th>
+                            <th>Тема и AI-суть</th>
+                            <th style="width: 120px;">Действие</th>
+                            <th style="width: 100px;">Дата</th>
+                            <th style="width: 110px; text-align: center;">Lotus</th>
+                        </tr>
+                    </thead>
+                    <tbody id="emailTableBody">
+                        <tr><td colspan="8" class="empty-placeholder">Загрузка данных...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let emails = [];
+        let eTopList = [];
+        let eDirList = [];
+        let currentFilter = 'all';
+        let expandedIds = new Set();
+        let isSyncing = false;
+
+        function openLotus(url) {
+            if (!url) return;
+            // Гарантированный триггер протокола Notes в Windows
+            window.location.assign(url);
+        }
+
+        async function init() {
+            try {
+                const cfgRes = await fetch('/api/settings');
+                if (cfgRes.ok) {
+                    const cfg = await cfgRes.json();
+                    eTopList = (cfg.e_top || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+                    eDirList = (cfg.e_dir || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+                }
+            } catch(e) {}
+
+            await loadCachedJSON();
+        }
+
+        async function loadCachedJSON() {
+            try {
+                const response = await fetch(`dashboard_data.json?t=${new Date().getTime()}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.emails && data.emails.length > 0) {
+                        emails = data.emails;
+                        renderDashboard();
+                        document.getElementById('lastSyncLabel').innerText = 'Данные загружены из кэша';
+                    }
+                }
+            } catch(e) {}
+        }
+
+        async function triggerFullSync() {
+            if (isSyncing) return;
+            isSyncing = true;
+
+            const icon = document.getElementById('syncIcon');
+            const txt = document.getElementById('syncText');
+            const btn = document.getElementById('btnSync');
+            
+            icon.innerText = '⌛';
+            txt.innerText = 'Сбор из Notes...';
+            btn.disabled = true;
+            document.getElementById('lastSyncLabel').innerText = 'Чтение базы Notes & AI классификация...';
+
+            try {
+                const res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({days: 2})
+                });
+                if (!res.ok) throw new Error('Ошибка сервера: ' + res.status);
+                const data = await res.json();
+                emails = data.emails || [];
+                renderDashboard();
+                document.getElementById('lastSyncLabel').innerText = `Обновлено: ${new Date().toLocaleTimeString()}`;
+            } catch (err) {
+                console.error('Ошибка анализа:', err);
+                document.getElementById('lastSyncLabel').innerText = 'Сбой сбора данных';
+            } finally {
+                icon.innerText = '↻';
+                txt.innerText = 'Собрать и анализировать';
+                btn.disabled = false;
+                isSyncing = false;
+            }
+        }
+
+        function isETop(name) { return eTopList.some(v => (name||"").toLowerCase().includes(v)); }
+        function isEDir(name) { return eDirList.some(v => (name||"").toLowerCase().includes(v)); }
+
+        async function toggleReadStatus(id, event) {
+            if (event) event.stopPropagation();
+            const target = emails.find(e => e.id === id);
+            if (!target) return;
+            
+            target.isRead = !target.isRead;
+            renderDashboard();
+
+            if (target.unid) {
+                try {
+                    await fetch('/api/mark-read', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({unid: target.unid, is_read: target.isRead})
+                    });
+                } catch(e) {
+                    console.error("Ошибка смены статуса в Notes:", e);
+                }
+            }
+        }
+
+        function toggleExpand(id, event) {
+            if (event) event.stopPropagation();
+            if (expandedIds.has(id)) expandedIds.delete(id);
+            else expandedIds.add(id);
+            renderDashboard();
+        }
+
+        function setFilter(f) {
+            currentFilter = f;
+            ['all','urgent','needs_reply','vip'].forEach(type => {
+                const el = document.getElementById(`filter-${type}`);
+                if(el) el.className = (type === f) ? "btn-filter active" : "btn-filter";
+            });
+            renderDashboard();
+        }
+
+        function renderDashboard() {
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+            const processed = emails.map(e => {
+                const text = e.threadMessages && e.threadMessages[0] ? e.threadMessages[0].text : (e.body || "");
+                return { ...e, summary: text };
+            });
+
+            // KPI
+            document.getElementById('kpiETop').innerText = processed.filter(e => e.priority === 1 || isETop(e.senderName)).length;
+            document.getElementById('kpiNeedsReply').innerText = processed.filter(e => e.needsReply && !e.isReplied).length;
+            document.getElementById('kpiEDir').innerText = processed.filter(e => isEDir(e.senderName)).length;
+            document.getElementById('kpiUnreadTotal').innerText = processed.filter(e => !e.isRead).length;
+
+            // Секция ТОП-Внимание
+            const topFocus = processed.filter(e => e.priority === 1 || (isETop(e.senderName) && (!e.isRead || e.needsReply)));
+            const topContainer = document.getElementById('topFocusContainer');
+            
+            if (topFocus.length === 0) {
+                topContainer.innerHTML = `<div class="empty-placeholder" style="background:#fff; border: 1px dashed var(--border-color); border-radius:14px;">Нет горящих задач. Все критические письма обработаны.</div>`;
+            } else {
+                topContainer.innerHTML = topFocus.map(e => {
+                    const isOpen = expandedIds.has('top_' + e.id);
+                    return `
+                    <div class="top-card">
+                        <div class="top-card-header" onclick="toggleExpand('top_${e.id}')">
+                            <div class="top-card-main">
+                                <button class="btn-expand-icon">${isOpen ? '▼' : '▶'}</button>
+                                <div>
+                                    <div class="top-card-sender">
+                                        <span>${e.senderName}</span>
+                                        <span class="tag-p1">P1 ГОРЯЩЕЕ</span>
+                                        ${!e.isRead ? '<span class="tag-new">НОВОЕ</span>' : ''}
+                                    </div>
+                                    <div class="top-card-subj">${e.subject}</div>
+                                    <div class="top-card-summary">${e.summary}</div>
+                                </div>
+                            </div>
+                            <div class="top-card-actions">
+                                <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle ${!e.isRead ? 'is-unread' : ''}">
+                                    ${e.isRead ? 'Прочитано' : '● Новое'}
+                                </button>
+                                <button onclick="openLotus('${e.lotus_url}')" class="btn-lotus">
+                                    Открыть в Lotus
+                                </button>
+                            </div>
+                        </div>
+                        ${isOpen ? `
+                        <div class="top-card-body">
+                            <div style="font-weight:700; color:#64748b; font-size:11px; text-transform:uppercase;">AI Выжимка и суть:</div>
+                            <div class="ai-box">${e.summary}</div>
+                        </div>` : ''}
+                    </div>`;
+                }).join('');
+            }
+
+            // Фильтрация
+            let filtered = processed.filter(e => {
+                if (currentFilter === 'urgent' && e.priority !== 1) return false;
+                if (currentFilter === 'needs_reply' && (!e.needsReply || e.isReplied)) return false;
+                if (currentFilter === 'vip' && !isETop(e.senderName) && !isEDir(e.senderName)) return false;
+                if (searchVal) return (e.subject + e.senderName + e.summary).toLowerCase().includes(searchVal);
+                return true;
+            });
+
+            const tbody = document.getElementById('emailTableBody');
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="empty-placeholder">Писем не найдено.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(e => {
+                const isExpanded = expandedIds.has('tbl_' + e.id);
+                const pClass = e.priority === 1 ? 'p1' : (e.priority === 2 ? 'p2' : 'p3');
+                const rowClass = !e.isRead ? 'unread-row' : 'read-row';
+
+                let actionHtml = '<span class="tag-action none">—</span>';
+                if (e.needsReply && !e.isReplied) {
+                    actionHtml = '<span class="tag-action needs-reply">⚡ Ответить</span>';
+                } else if (e.isReplied) {
+                    actionHtml = '<span class="tag-action replied">✓ Отвечено</span>';
+                }
+
+                return `
+                <tr onclick="toggleExpand('tbl_${e.id}')" class="${rowClass}">
+                    <td style="text-align:center; color:#94a3b8; font-size:11px;">
+                        ${isExpanded ? '▼' : '▶'}
+                    </td>
+                    <td onclick="event.stopPropagation()">
+                        <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle ${!e.isRead ? 'is-unread' : ''}">
+                            ${e.isRead ? 'Прочитано' : '● Новое'}
+                        </button>
+                    </td>
+                    <td><span class="p-badge ${pClass}">P${e.priority}</span></td>
+                    <td style="font-weight:700; color:#1e293b;">${e.senderName}</td>
+                    <td>
+                        <div style="font-weight:700; color:#0f172a;">${e.subject}</div>
+                        <div style="color:#64748b; font-size:11px; margin-top:2px;">${e.summary}</div>
+                    </td>
+                    <td>${actionHtml}</td>
+                    <td style="color:#64748b; font-size:11px;">${e.date}</td>
+                    <td style="text-align:center;" onclick="event.stopPropagation()">
+                        <button onclick="openLotus('${e.lotus_url}')" class="btn-lotus-secondary">
+                            В Lotus
+                        </button>
+                    </td>
+                </tr>
+                ${isExpanded ? `
+                <tr style="background:#f8fafc;">
+                    <td colspan="8" style="padding:16px;">
+                        <div style="background:#fff; border:1px solid var(--border-color); border-radius:10px; padding:16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:10px; margin-bottom:10px;">
+                                <span style="font-weight:700; font-size:11px; text-transform:uppercase; color:#64748b;">AI Анализ & Подробно</span>
+                                <div style="display:flex; gap:8px;">
+                                    <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle">
+                                        ${e.isRead ? 'Сделать новым' : 'Отметить прочитанным'}
+                                    </button>
+                                    <button onclick="openLotus('${e.lotus_url}')" class="btn-lotus">
+                                        Открыть в Lotus Notes
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="white-space:pre-line; color:#334155; line-height:1.6;">${e.summary}</div>
+                        </div>
+                    </td>
+                </tr>` : ''}`;
+            }).join('');
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
