@@ -1,0 +1,1 @@
+﻿cmd.exe /k "chcp 65001 >nul && title Smart Mail Dashboard Server && py C:\Projects\LOTUS\notes_gemini.py"

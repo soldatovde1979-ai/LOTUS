@@ -154,7 +154,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800):
                 "needsReply": False,
                 "priority": 3,
                 "body": clean_body,
-                "threadMessages": [{"text": clean_body}]
+                "threadMessages": [{"text": clean_body}]Ы
             })
             idx += 1
             if len(emails) >= max_emails:
@@ -191,68 +191,77 @@ def call_ai_triage(emails):
     api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
     base_url = cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/")
     model = cfg.get("DEEPSEEK", "model", fallback="deepseek-chat").strip()
+    batch_size = cfg.getint("NOTES", "batch_size", fallback=15)
     raw_template = load_prompt_template()
 
-    print(f"[*] Отправка {len(emails)} писем в DeepSeek AI...")
+    print(f"[*] Отправка {len(emails)} писем в DeepSeek AI пакетами по {batch_size}...")
 
-    prompt_payload = [{
-        "id": e["id"],
-        "sender": e["senderName"],
-        "subject": e["subject"],
-        "body": e["body"][:400]
-    } for e in emails]
+    # Разбиваем письма на пакеты
+    batches = [emails[i:i + batch_size] for i in range(0, len(emails), batch_size)]
+    total_batches = len(batches)
 
-    prompt = (raw_template
-        .replace("[[E_TOP_LIST]]", str(e_top))
-        .replace("[[E_DIR_LIST]]", str(e_dir))
-        .replace("[[EMAIL_COUNT]]", str(len(emails)))
-        .replace("[[EMAILS_PAYLOAD]]", json.dumps(prompt_payload, ensure_ascii=False, indent=2))
-    )
+    for batch_idx, batch in enumerate(batches, 1):
+        print(f"[*] Обработка пакета {batch_idx}/{total_batches} ({len(batch)} писем)...")
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "Ты — корпоративный AI Triage ассистент. Отвечай только валидным JSON без markdown."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.1,
-        "stream": False
-    }
+        prompt_payload = [{
+            "id": e["id"],
+            "sender": e["senderName"],
+            "subject": e["subject"],
+            "body": e["body"][:400]
+        } for e in batch]
 
-    try:
-        req_data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-        req = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=req_data,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST"
+        prompt = (raw_template
+            .replace("[[E_TOP_LIST]]", str(e_top))
+            .replace("[[E_DIR_LIST]]", str(e_dir))
+            .replace("[[EMAIL_COUNT]]", str(len(batch)))
+            .replace("[[EMAILS_PAYLOAD]]", json.dumps(prompt_payload, ensure_ascii=False, indent=2))
         )
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
 
-        with urllib.request.urlopen(req, context=ctx, timeout=30.0) as resp:
-            res_json = json.loads(resp.read().decode('utf-8'))
-            raw_text = res_json["choices"][0]["message"]["content"].strip()
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "Ты — корпоративный AI Triage ассистент. Отвечай только валидным JSON без markdown."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "stream": False
+        }
 
-        match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw_text)
-        if match:
-            raw_text = match.group(1)
-        parsed = json.loads(raw_text)
-        items = parsed if isinstance(parsed, list) else parsed.get("emails", [])
+        try:
+            req_data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=req_data,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
 
-        ai_map = {str(it.get("id")): it for it in items}
-        for e in emails:
-            info = ai_map.get(str(e["id"]), {})
-            if info:
-                e["priority"] = int(info.get("criticality", e["priority"]))
-                e["needsReply"] = bool(info.get("needsReply", e["needsReply"]))
-                if "summary" in info:
-                    e["threadMessages"] = [{"text": info["summary"]}]
-        print(f"[✓] AI анализ успешно завершен!")
-    except Exception as e:
-        print(f"[!] AI Triage пропущен из-за ошибки: {e}")
+            with urllib.request.urlopen(req, context=ctx, timeout=30.0) as resp:
+                res_json = json.loads(resp.read().decode('utf-8'))
+                raw_text = res_json["choices"][0]["message"]["content"].strip()
 
+            match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw_text)
+            if match:
+                raw_text = match.group(1)
+            parsed = json.loads(raw_text)
+            items = parsed if isinstance(parsed, list) else parsed.get("emails", [])
+
+            ai_map = {str(it.get("id")): it for it in items}
+            for e in batch:
+                info = ai_map.get(str(e["id"]), {})
+                if info:
+                    e["priority"] = int(info.get("criticality", e["priority"]))
+                    e["needsReply"] = bool(info.get("needsReply", e["needsReply"]))
+                    if "summary" in info:
+                        e["threadMessages"] = [{"text": info["summary"]}]
+            print(f"[✓] Пакет {batch_idx}/{total_batches} обработан успешно!")
+        except Exception as e:
+            print(f"[!] AI Triage для пакета {batch_idx}/{total_batches} пропущен из-за ошибки: {e}")
+
+    print(f"[✓] AI анализ всех {len(emails)} писем завершен!")
     return emails
 
 class NotesWebHandler(SimpleHTTPRequestHandler):
