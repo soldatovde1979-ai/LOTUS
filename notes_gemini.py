@@ -144,21 +144,64 @@ def load_prompt_template():
             return f.read()
     return "[[EMAILS_PAYLOAD]]"
 
-def extract_statuses(doc, session):
-    is_unread = False
+def get_unread_unids(db):
+    """
+    Возвращает множество UNID непрочитанных документов.
+    Использует штатный механизм Notes вместо хрупкого GetRead().
+    """
     try:
-        # Проверяем статус прочтения текущим пользователем
-        read_flag = False
+        # Try GetUnreadDocumentTable (доступно в большинстве версий)
+        if hasattr(db, "GetUnreadDocumentTable"):
+            table = db.GetUnreadDocumentTable()
+            if table:
+                unread = set()
+                doc = table.GetFirstDocument()
+                while doc:
+                    unread.add(str(doc.UniversalID).strip())
+                    doc = table.GetNextDocument(doc)
+                return unread
+    except Exception as e:
+        print(f"[!] GetUnreadDocumentTable не сработал: {e}")
+
+    try:
+        # Fallback: Session.GetUnreadDocuments
+        session_tmp = win32com.client.Dispatch("Lotus.NotesSession")
+        session_tmp.Initialize()
+        if hasattr(session_tmp, "GetUnreadDocuments"):
+            coll = session_tmp.GetUnreadDocuments(db)
+            if coll:
+                unread = set()
+                doc = coll.GetFirstDocument()
+                while doc:
+                    unread.add(str(doc.UniversalID).strip())
+                    doc = coll.GetNextDocument(doc)
+                return unread
+    except Exception as e:
+        print(f"[!] Session.GetUnreadDocuments не сработал: {e}")
+
+    return None
+
+
+def extract_statuses(doc, session, unread_unids=None):
+    is_unread = False
+
+    # Приоритет: штатный список непрочитанных
+    if unread_unids is not None:
+        unid = str(doc.UniversalID).strip()
+        is_unread = unid in unread_unids
+    else:
         try:
-            read_flag = doc.GetRead(session.CommonUserName)
-        except Exception:
+            read_flag = False
             try:
-                read_flag = doc.GetRead()
+                read_flag = doc.GetRead(session.CommonUserName)
             except Exception:
-                read_flag = doc.GetRead(session.UserName)
-        is_unread = not read_flag
-    except Exception:
-        is_unread = False
+                try:
+                    read_flag = doc.GetRead()
+                except Exception:
+                    read_flag = doc.GetRead(session.UserName)
+            is_unread = not read_flag
+        except Exception:
+            is_unread = False
 
     is_replied = False
     try:
@@ -253,6 +296,8 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800):
         print(f"[!] Ошибка БД: {db_err}")
         return []
 
+    unread_unids = get_unread_unids(db)
+
     replica_id = str(db.ReplicaID).replace(":", "").strip()
     start_date = (datetime.now() - timedelta(days=days)).strftime("%d.%m.%Y")
     search_query = f'@IsAvailable(DeliveredDate) & DeliveredDate >= [{start_date}]'
@@ -273,7 +318,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800):
             sender = doc.GetItemValue("From")[0] if doc.HasItem("From") else "(Неизвестный)"
             sender_email = extract_sender_email(doc)
             delivered = doc.GetItemValue("DeliveredDate")[0] if doc.HasItem("DeliveredDate") else doc.Created
-            is_unread, is_replied = extract_statuses(doc, session)
+            is_unread, is_replied = extract_statuses(doc, session, unread_unids)
             unid = str(doc.UniversalID).strip()
 
             body_text = ""
