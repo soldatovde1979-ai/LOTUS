@@ -110,6 +110,40 @@
         .tag-action.none { color: #94a3b8; }
 
         .empty-placeholder { padding: 36px; text-align: center; color: #94a3b8; font-size: 13px; }
+
+        /* Модальное окно настроек */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
+        .modal-overlay.show { display: flex; }
+        .modal { background: #fff; border-radius: 16px; padding: 24px; max-width: 640px; width: 100%; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.25); }
+        .modal h2 { font-size: 16px; font-weight: 800; margin-bottom: 14px; color: #0f172a; }
+        .modal label { display: block; font-size: 12px; font-weight: 700; color: #475569; margin: 12px 0 4px; }
+        .modal textarea { width: 100%; min-height: 90px; border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; font-size: 12px; font-family: monospace; resize: vertical; }
+        .modal textarea:focus { border-color: var(--primary); outline: none; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+        .modal-note { font-size: 11px; color: #94a3b8; background: #f8fafc; border-radius: 8px; padding: 8px 12px; margin-top: 10px; border: 1px solid #e2e8f0; line-height: 1.5; }
+
+        .btn-settings { background: #fff; border: 1px solid var(--border-color); color: #475569; padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.15s; }
+        .btn-settings:hover { background: #f1f5f9; border-color: #94a3b8; }
+        .btn-secondary { background: #f1f5f9; border: 1px solid #cbd5e1; color: #1e293b; padding: 8px 16px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .btn-secondary:hover { background: #e2e8f0; }
+        .btn-primary { background: var(--primary); color: #fff; border: none; padding: 8px 18px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .btn-primary:hover { background: var(--primary-hover); }
+
+        /* Вертикальные полосы приоритета */
+        .priority-bar { width: 4px; border-radius: 4px; display: inline-block; }
+        .priority-bar.p1 { background: #dc2626; box-shadow: 0 0 6px rgba(220,38,38,0.5); }
+        .priority-bar.p2 { background: #f59e0b; box-shadow: 0 0 4px rgba(245,158,11,0.4); }
+        .priority-bar.p3 { background: transparent; }
+        td.priority-cell { width: 8px; padding: 0 2px; }
+
+        .btn-reply { background: #7c3aed; color: #fff; border: none; padding: 7px 16px; border-radius: 8px; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.15s; box-shadow: 0 2px 4px rgba(124,58,237,0.3); }
+        .btn-reply:hover { background: #6d28d9; transform: translateY(-1px); }
+
+        .status-combo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .date-sender { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+        .date-sender .sender-name { font-weight: 700; color: #1e293b; }
+        .date-sender .sender-email { font-size: 10px; color: #94a3b8; }
+        .date-sender .date-badge { font-size: 10px; color: #64748b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -125,10 +159,15 @@
                     <div class="header-status" id="lastSyncLabel">Готов к работе</div>
                 </div>
             </div>
-            <button onclick="triggerFullSync()" id="btnSync" class="btn-sync">
-                <span id="syncIcon">↻</span>
-                <span id="syncText">Собрать и анализировать</span>
-            </button>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                <button onclick="openSettings()" class="btn-settings" title="Настройки TOP / DIR">
+                    ⚙ Настройки
+                </button>
+                <button onclick="triggerFullSync()" id="btnSync" class="btn-sync">
+                    <span id="syncIcon">↻</span>
+                    <span id="syncText">Собрать и анализировать</span>
+                </button>
+            </div>
         </div>
     </header>
 
@@ -180,15 +219,13 @@
             <div class="table-responsive">
                 <table>
                     <thead>
-                        <tr>
-                            <th style="width: 32px; text-align: center;"></th>
-                            <th style="width: 120px;">Статус</th>
-                            <th style="width: 70px;">Приоритет</th>
-                            <th style="width: 220px;">Отправитель</th>
-                            <th>Тема и AI-суть</th>
-                            <th style="width: 120px;">Действие</th>
-                            <th style="width: 100px;">Дата</th>
-                            <th style="width: 110px; text-align: center;">Lotus</th>
+                                                <tr>
+                            <th style="width: 8px;"></th>
+                            <th style="width: 130px;">СТАТУС / ОТВЕЧЕНО</th>
+                            <th style="width: 180px;">ДАТА / ОТПРАВИТЕЛЬ</th>
+                            <th>ТЕМА И AI СУТЬ</th>
+                            <th style="width: 100px;">ДЕЙСТВИЕ</th>
+                            <th style="width: 110px; text-align: center;">LOTUS</th>
                         </tr>
                     </thead>
                     <tbody id="emailTableBody">
@@ -197,15 +234,101 @@
                 </table>
             </div>
         </section>
-    </main>
+        </main>
+
+    <!-- Модальное окно настроек -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <h2>⚙ Настройки ключевых персон</h2>
+            <p style="font-size:12px; color:#64748b; line-height:1.5;">
+                Укажите ФИО через запятую. При сборе писем система автоматически преобразует ФИО в почты
+                (поиск по текущим данным) и сохранит их в <code>set.ini</code>. Ненайденные ФИО будут
+                повторно проверены при следующем чтении.
+            </p>
+            <label>👑 E_TOP (Высшее руководство)</label>
+            <textarea id="settingsTop"></textarea>
+            <label>👤 E_DIR (Директора / Руководители)</label>
+            <textarea id="settingsDir"></textarea>
+            <div class="modal-note" id="settingsEmailsInfo">Сохранённые почты будут отображены после сбора писем.</div>
+            <div class="modal-actions">
+                <button onclick="closeSettings()" class="btn-secondary">Отмена</button>
+                <button onclick="saveSettings()" class="btn-primary">💾 Сохранить</button>
+            </div>
+        </div>
+    </div>
 
     <script>
-        let emails = [];
+                let emails = [];
         let eTopList = [];
         let eDirList = [];
+        let eTopEmails = [];
+        let eDirEmails = [];
         let currentFilter = 'all';
         let expandedIds = new Set();
         let isSyncing = false;
+
+        function openSettings() {
+            document.getElementById('settingsTop').value = eTopList.join(', ');
+            document.getElementById('settingsDir').value = eDirList.join(', ');
+            const info = document.getElementById('settingsEmailsInfo');
+            const topEmailsLine = eTopEmails.length ? eTopEmails.join(', ') : 'пока не определены';
+            const dirEmailsLine = eDirEmails.length ? eDirEmails.join(', ') : 'пока не определены';
+            info.innerHTML = `<b>Найденные почты:</b><br>👑 TOP: ${topEmailsLine}<br>👤 DIR: ${dirEmailsLine}`;
+            document.getElementById('settingsModal').classList.add('show');
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.remove('show');
+        }
+
+        async function saveSettings() {
+            const e_top = document.getElementById('settingsTop').value.trim();
+            const e_dir = document.getElementById('settingsDir').value.trim();
+            try {
+                const res = await fetch('/api/save-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({e_top, e_dir})
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Ошибка');
+                eTopList = e_top.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+                eDirList = e_dir.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+                eTopEmails = (data.e_top_emails || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                eDirEmails = (data.e_dir_emails || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                closeSettings();
+                renderDashboard();
+                document.getElementById('lastSyncLabel').innerText = 'Настройки сохранены';
+            } catch(err) {
+                console.error(err);
+                alert('Ошибка сохранения: ' + err.message);
+            }
+        }
+
+        async function openReply(id, event) {
+                    if (event) event.stopPropagation();
+                    const email = emails.find(e => e.id === id);
+                    if (!email || !email.unid) return;
+                    const suggested = email.suggestedReply || '';
+                    const body = prompt('Введите текст ответа (или используйте предложенный AI):', suggested || '');
+                    if (!body) return;
+                    try {
+                        const res = await fetch('/api/reply', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({unid: email.unid, text: body})
+                        });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Ошибка');
+                if (data.lotus_url) {
+                    openLotus(data.lotus_url);
+                    document.getElementById('lastSyncLabel').innerText = 'Черновик ответа создан в Lotus Notes';
+                }
+            } catch(err) {
+                console.error(err);
+                alert('Ошибка: ' + err.message);
+            }
+        }
 
         function openLotus(url) {
             if (!url) return;
@@ -215,11 +338,13 @@
 
         async function init() {
             try {
-                const cfgRes = await fetch('/api/settings');
+                                const cfgRes = await fetch('/api/settings');
                 if (cfgRes.ok) {
                     const cfg = await cfgRes.json();
                     eTopList = (cfg.e_top || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
                     eDirList = (cfg.e_dir || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+                    eTopEmails = (cfg.e_top_emails || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+                    eDirEmails = (cfg.e_dir_emails || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
                 }
             } catch(e) {}
 
@@ -275,8 +400,11 @@
             }
         }
 
-        function isETop(name) { return eTopList.some(v => (name||"").toLowerCase().includes(v)); }
+                function isETop(name) { return eTopList.some(v => (name||"").toLowerCase().includes(v)); }
         function isEDir(name) { return eDirList.some(v => (name||"").toLowerCase().includes(v)); }
+
+        function isETopEmail(email) { return eTopEmails.some(v => (email||"").toLowerCase() === v); }
+        function isEDirEmail(email) { return eDirEmails.some(v => (email||"").toLowerCase() === v); }
 
         async function toggleReadStatus(id, event) {
             if (event) event.stopPropagation();
@@ -315,21 +443,22 @@
             renderDashboard();
         }
 
-        function renderDashboard() {
+                function renderDashboard() {
             const searchVal = document.getElementById('searchInput').value.toLowerCase();
             const processed = emails.map(e => {
                 const text = e.threadMessages && e.threadMessages[0] ? e.threadMessages[0].text : (e.body || "");
-                return { ...e, summary: text };
+                const sugg = (e.suggestedReply || e.suggested_reply || '');
+                return { ...e, summary: text, suggestedReply: sugg };
             });
 
-            // KPI
-            document.getElementById('kpiETop').innerText = processed.filter(e => e.priority === 1 || isETop(e.senderName)).length;
+            // KPI (по почте)
+            document.getElementById('kpiETop').innerText = processed.filter(e => e.priority === 1 || isETop(e.senderName) || isETopEmail(e.senderEmail)).length;
             document.getElementById('kpiNeedsReply').innerText = processed.filter(e => e.needsReply && !e.isReplied).length;
-            document.getElementById('kpiEDir').innerText = processed.filter(e => isEDir(e.senderName)).length;
+            document.getElementById('kpiEDir').innerText = processed.filter(e => isEDir(e.senderName) || isEDirEmail(e.senderEmail)).length;
             document.getElementById('kpiUnreadTotal').innerText = processed.filter(e => !e.isRead).length;
 
             // Секция ТОП-Внимание
-            const topFocus = processed.filter(e => e.priority === 1 || (isETop(e.senderName) && (!e.isRead || e.needsReply)));
+            const topFocus = processed.filter(e => e.priority === 1 || ((isETop(e.senderName) || isETopEmail(e.senderEmail)) && (!e.isRead || e.needsReply)));
             const topContainer = document.getElementById('topFocusContainer');
             
             if (topFocus.length === 0) {
@@ -356,6 +485,9 @@
                                 <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle ${!e.isRead ? 'is-unread' : ''}">
                                     ${e.isRead ? 'Прочитано' : '● Новое'}
                                 </button>
+                                <button onclick="openReply('${e.id}', event)" class="btn-reply">
+                                    ✉ Ответить
+                                </button>
                                 <button onclick="openLotus('${e.lotus_url}')" class="btn-lotus">
                                     Открыть в Lotus
                                 </button>
@@ -370,18 +502,18 @@
                 }).join('');
             }
 
-            // Фильтрация
+            // Фильтрация (по почте)
             let filtered = processed.filter(e => {
                 if (currentFilter === 'urgent' && e.priority !== 1) return false;
                 if (currentFilter === 'needs_reply' && (!e.needsReply || e.isReplied)) return false;
-                if (currentFilter === 'vip' && !isETop(e.senderName) && !isEDir(e.senderName)) return false;
-                if (searchVal) return (e.subject + e.senderName + e.summary).toLowerCase().includes(searchVal);
+                if (currentFilter === 'vip' && !isETop(e.senderName) && !isETopEmail(e.senderEmail) && !isEDir(e.senderName) && !isEDirEmail(e.senderEmail)) return false;
+                if (searchVal) return (e.subject + e.senderName + (e.senderEmail||'') + e.summary).toLowerCase().includes(searchVal);
                 return true;
             });
 
             const tbody = document.getElementById('emailTableBody');
             if (filtered.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="8" class="empty-placeholder">Писем не найдено.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="empty-placeholder">Писем не найдено.</td></tr>`;
                 return;
             }
 
@@ -392,29 +524,34 @@
 
                 let actionHtml = '<span class="tag-action none">—</span>';
                 if (e.needsReply && !e.isReplied) {
-                    actionHtml = '<span class="tag-action needs-reply">⚡ Ответить</span>';
+                    actionHtml = `<button onclick="openReply('${e.id}', event)" class="btn-reply" style="padding:5px 10px; font-size:11px;">⚡ Ответить</button>`;
                 } else if (e.isReplied) {
                     actionHtml = '<span class="tag-action replied">✓ Отвечено</span>';
                 }
 
                 return `
                 <tr onclick="toggleExpand('tbl_${e.id}')" class="${rowClass}">
-                    <td style="text-align:center; color:#94a3b8; font-size:11px;">
-                        ${isExpanded ? '▼' : '▶'}
-                    </td>
+                    <td class="priority-cell"><span class="priority-bar ${pClass}">&nbsp;</span></td>
                     <td onclick="event.stopPropagation()">
-                        <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle ${!e.isRead ? 'is-unread' : ''}">
-                            ${e.isRead ? 'Прочитано' : '● Новое'}
-                        </button>
+                        <div class="status-combo">
+                            <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle ${!e.isRead ? 'is-unread' : ''}">
+                                ${e.isRead ? 'Прочитано' : '● Новое'}
+                            </button>
+                            ${e.needsReply && !e.isReplied ? '<span class="tag-action needs-reply">⚡ Нужен ответ</span>' : (e.isReplied ? '<span class="tag-action replied">✓ Отвечено</span>' : '')}
+                        </div>
                     </td>
-                    <td><span class="p-badge ${pClass}">P${e.priority}</span></td>
-                    <td style="font-weight:700; color:#1e293b;">${e.senderName}</td>
+                    <td>
+                        <div class="date-sender">
+                            <span class="date-badge">${e.date}</span>
+                            <span class="sender-name">${e.senderName}</span>
+                            ${e.senderEmail ? `<span class="sender-email">${e.senderEmail}</span>` : ''}
+                        </div>
+                    </td>
                     <td>
                         <div style="font-weight:700; color:#0f172a;">${e.subject}</div>
                         <div style="color:#64748b; font-size:11px; margin-top:2px;">${e.summary}</div>
                     </td>
                     <td>${actionHtml}</td>
-                    <td style="color:#64748b; font-size:11px;">${e.date}</td>
                     <td style="text-align:center;" onclick="event.stopPropagation()">
                         <button onclick="openLotus('${e.lotus_url}')" class="btn-lotus-secondary">
                             В Lotus
@@ -423,11 +560,14 @@
                 </tr>
                 ${isExpanded ? `
                 <tr style="background:#f8fafc;">
-                    <td colspan="8" style="padding:16px;">
+                    <td colspan="6" style="padding:16px;">
                         <div style="background:#fff; border:1px solid var(--border-color); border-radius:10px; padding:16px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:10px; margin-bottom:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:10px; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                                 <span style="font-weight:700; font-size:11px; text-transform:uppercase; color:#64748b;">AI Анализ & Подробно</span>
-                                <div style="display:flex; gap:8px;">
+                                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <button onclick="openReply('${e.id}', event)" class="btn-reply">
+                                        ✉ ОТВЕТИТЬ
+                                    </button>
                                     <button onclick="toggleReadStatus('${e.id}', event)" class="btn-read-toggle">
                                         ${e.isRead ? 'Сделать новым' : 'Отметить прочитанным'}
                                     </button>
