@@ -271,6 +271,13 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
 #toast button { background:none; border:none; color:var(--bg); font-weight:700; cursor:pointer;
                 text-decoration:underline; padding:0 6px; font-size:12.5px; }
 
+
+.demo-bar { margin:0 18px 10px; padding:7px 13px; border-radius:var(--radius);
+  background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent-text);
+  font-size:11.5px; display:flex; align-items:center; gap:9px; }
+.demo-tag { background:var(--accent); color:#fff; font-weight:700; font-size:10px;
+  padding:2px 8px; border-radius:999px; letter-spacing:.04em; flex-shrink:0; }
+
 @media (max-width:900px) {
   body { overflow:auto; }
   .work { grid-template-columns:1fr; height:auto; }
@@ -331,6 +338,10 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
   </div>
 
   <div class="notice" id="notice"><span>⚠</span><span id="noticeTx"></span></div>
+  <div class="demo-bar">
+    <span class="demo-tag">Демо</span>
+    <span>Витрина интерфейса на вымышленных данных. Lotus Notes и сервер не задействованы — кнопки работают, но письма никуда не уходят.</span>
+  </div>
 </header>
 
 <div class="work">
@@ -520,6 +531,316 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
 </div>
 
 <div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   ДЕМО-РЕЖИМ. Подменяет сеть на локальные данные.
+   Этого файла нет в рабочей сборке — он только для оценки интерфейса.
+   ═══════════════════════════════════════════════════════════════ */
+(function () {
+  const H = 3600000, D = 86400000;
+  const now = Date.now();
+  const iso = ms => {
+    const d = new Date(ms);
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
+  };
+  const disp = ms => iso(ms).replace('T', ' ').slice(0, 16);
+
+  let seq = 0;
+  const mk = (ago, senderName, senderEmail, subject, o = {}) => {
+    const ms = now - ago;
+    seq += 1;
+    return {
+      id: String(seq),
+      unid: 'DEMO' + String(seq).padStart(4, '0'),
+      lotus_url: 'notes:///0000DEMO/0/DEMO' + String(seq).padStart(4, '0'),
+      date: disp(ms),
+      dateIso: iso(ms),
+      senderName, senderEmail, subject,
+      isRead: o.isRead !== undefined ? o.isRead : true,
+      readKnown: true,
+      isReplied: !!o.isReplied,
+      needsReply: !!o.needsReply,
+      priority: o.priority || 3,
+      senderTag: o.senderTag || undefined,
+      workState: o.workState || 'new',
+      stateAt: o.stateAt || '',
+      body: o.body || '',
+      summary: o.summary || '',
+      suggestedReply: o.suggestedReply || '',
+      threadMessages: [{ text: o.summary || o.body || '' }]
+    };
+  };
+
+  const EMAILS = [
+    /* ─── сегодня, утро и день ─── */
+    mk(0.6*H, 'Egor V Stolyarov', 'ev.stolyarov@svo.su',
+      'Срочно: согласование бюджета МТО на IV квартал',
+      { priority:1, needsReply:true, isRead:false, senderTag:'E_TOP',
+        summary:'Требуется согласование бюджета МТО на IV квартал до конца дня — правление переносит защиту на завтра.',
+        suggestedReply:'Егор Валерьевич, добрый день!\n\nБюджет МТО на IV квартал согласую сегодня до 18:00. Расхождения по статье «планшеты инженерного состава» вынесу отдельным слайдом к защите.\n\nС уважением,',
+        body:'Коллеги, добрый день!\n\nПравление перенесло защиту бюджета на завтра, 10:00. Прошу согласовать итоговую версию по МТО сегодня до 18:00 — без вашей визы материалы на комитет не уходят.\n\nОсобое внимание к статье закупки планшетов инженерного состава ДЭНТ/ДГМ: цифра выросла относительно предварительной заявки на 14%. Нужно обоснование в одну страницу.\n\nЕ. Столяров' }),
+
+    mk(1.4*H, 'Olga A Timonina', 'oa.timonina@svo.su',
+      'Отчёт по использованию планшетов ДЭНТ за неделю',
+      { priority:2, needsReply:true, isRead:false,
+        summary:'Недельный отчёт ReportMTO готов: активность инженеров ДЭНТ выросла до 78%, по ДГМ провал — 41%.',
+        suggestedReply:'Ольга Александровна, спасибо. Отчёт посмотрел. Прошу подготовить разбивку по ДГМ в разрезе смен — обсудим на оперативке в четверг.',
+        body:'Направляю недельный отчёт ReportMTO.\n\nКлючевое:\n— ДЭНТ: активность 78% (+6 п.п. к прошлой неделе)\n— ДГМ: 41%, третью неделю без динамики\n— 12 планшетов не выходили на связь более 5 суток\n\nПодробности во вложении. Прошу обратной связи по разделу «Причины простоя».' }),
+
+    mk(2.2*H, 'Aleksandr M Bocharov', 'am.bocharov@svo.su',
+      'Re: Протокол совещания по цифровизации ТО',
+      { priority:1, needsReply:true, isRead:false, senderTag:'E_TOP',
+        summary:'Замечания к протоколу: пункт 4 о сроках внедрения переформулировать, срок — до среды.',
+        suggestedReply:'Александр Михайлович, принято. Пункт 4 переформулирую с указанием контрольных точек и направлю на согласование до среды.',
+        body:'По протоколу от 21-го числа два замечания.\n\n1. Пункт 4 сформулирован так, что срок внедрения читается как рекомендательный. Нужна жёсткая дата и ответственный.\n2. В пункте 7 не отражено решение по интеграции с 1С — оно принималось, зафиксируйте.\n\nИсправленную версию жду до среды.' }),
+
+    mk(3*H, '1С:Документооборот', 'techsupport.dtsup@svo.aero',
+      '[MTO-482] Ошибка выгрузки отчёта при пустом периоде',
+      { priority:3, isRead:false,
+        summary:'Заведён баг: отчёт падает, если в выбранном периоде нет данных по подразделению.',
+        body:'MTO-482 / Баг / Приоритет: Major\nИсполнитель: не назначен\n\nПри формировании отчёта за период без данных VBA-макрос завершается с ошибкой 1004. Воспроизводится стабильно.' }),
+
+    mk(3.6*H, 'Sergey V Potapov', 'sv.potapov@svo.su',
+      'Заявка на дополнительные лицензии — прошу поддержать',
+      { priority:2, needsReply:true, isRead:false,
+        summary:'Просит поддержать заявку на 40 дополнительных лицензий для инженеров второй смены.',
+        suggestedReply:'Сергей Владимирович, добрый день!\n\nЗаявку поддерживаю. Прошу приложить обоснование по загрузке второй смены — с ним отправлю на согласование в закупку.',
+        body:'Добрый день!\n\nВторая смена работает без доступа к системе, заявки оформляют через бригадира на бумаге. Нужно 40 лицензий, бюджет есть в остатках по статье 226.\n\nПрошу поддержать до пятницы, иначе уйдём в следующий квартал.' }),
+
+    mk(4.5*H, 'Natalya N Rylskikh', 'nn.rylskih@svo.su',
+      'Согласование графика обучения инженеров',
+      { priority:2, needsReply:true,
+        summary:'График обучения на сентябрь готов, требуется согласование по датам для ДГМ.',
+        suggestedReply:'Наталья Николаевна, добрый день! График согласую. По ДГМ прошу сдвинуть вторую группу на неделю — совпадает с плановыми работами.',
+        body:'Направляю проект графика обучения на сентябрь. Три группы по 15 человек, площадка — учебный центр.\n\nПо ДГМ даты предварительные, нужна ваша отмашка.' }),
+
+    mk(5.2*H, 'sup.ivanti@svo.su', 'sup.ivanti@svo.su',
+      'Документ №14-2291 ожидает вашей резолюции',
+      { priority:3,
+        summary:'В СЭД поступил документ на резолюцию, срок истекает через 2 рабочих дня.',
+        body:'Документ №14-2291 «О порядке учёта мобильных устройств» направлен вам на резолюцию. Срок: 2 рабочих дня.' }),
+
+    mk(6*H, 'Andrey V Korolev', 'av.korolev@svo.su',
+      'Инцидент: недоступность сервиса выгрузки с 09:12',
+      { priority:1, needsReply:true, isReplied:true,
+        summary:'Сервис выгрузки был недоступен 47 минут, причина — переполнение диска на узле. Восстановлен.',
+        body:'С 09:12 до 09:59 сервис выгрузки был недоступен. Причина — переполнение диска на узле app-02.\n\nВосстановлено, место освобождено, настроен мониторинг порога 85%. Постмортем подготовлю к завтрашнему дню.' }),
+
+    mk(7*H, 'Larisa N Firsova', 'ln.firsova@svo.su',
+      'Уточнение по статье расходов 226',
+      { priority:2, isReplied:true,
+        summary:'Разъяснение по отнесению затрат на планшеты к статье 226 — вопрос закрыт.',
+        body:'По вашему запросу: затраты на планшеты относим на 226 статью, основание — письмо департамента от 14-го числа. Вопрос считаю закрытым.' }),
+
+    /* ─── вчера ─── */
+    mk(1*D + 1*H, 'Natalya V Tyukova', 'nv.tyukova@svo.su',
+      'О подготовке материалов к совету директоров',
+      { priority:1, needsReply:true, isRead:false, senderTag:'E_TOP',
+        summary:'Материалы к совету директоров нужны в новом шаблоне, срок — понедельник, 12:00.',
+        suggestedReply:'Наталья Валерьевна, добрый день!\n\nМатериалы подготовлю в новом шаблоне и направлю в понедельник до 12:00. Раздел по цифровизации ТО дополню динамикой за квартал.',
+        body:'Коллеги!\n\nС этого квартала материалы к совету готовим в новом шаблоне — он в общей папке. Ваш блок: цифровизация ТО, не более 6 слайдов.\n\nСрок — понедельник, 12:00. Позже приём материалов закрывается.' }),
+
+    mk(1*D + 2.5*H, 'Anton V Gavrin', 'av.gavrin@svo.su',
+      'Результаты опытной эксплуатации в ангаре №3',
+      { priority:2, needsReply:true,
+        summary:'Опытная эксплуатация в ангаре №3 завершена, есть 4 замечания по интерфейсу приложения.',
+        suggestedReply:'Антон Васильевич, спасибо за развёрнутую обратную связь. Замечания передам в разработку, по срокам вернусь до конца недели.',
+        body:'Опытную эксплуатацию завершили.\n\nЗамечания инженеров:\n1. Мелкий шрифт в списке заявок — в перчатках попасть тяжело\n2. Нет офлайн-режима, в ангаре связь рвётся\n3. Долгий вход, до 40 секунд\n4. Не видно, кто уже взял заявку в работу\n\nВ целом отзывы положительные, к бумаге возвращаться никто не хочет.' }),
+
+    mk(1*D + 4*H, '1С:ERP УХ', 'techsupport.dtsup@svo.aero',
+      'Регламентное обновление конфигурации 25.08',
+      { priority:3,
+        summary:'Плановое обновление 1С в ночь на 25-е, недоступность до 06:00.',
+        body:'Уведомляем о регламентном обновлении конфигурации. Система будет недоступна с 01:00 до 06:00.' }),
+
+    mk(1*D + 5*H, 'Maksim S Polyakov', 'ms.polyakov@svo.su',
+      'Замечания к техническому заданию ReportMTO',
+      { priority:2, needsReply:true,
+        summary:'Три замечания к ТЗ: не описан формат выгрузки, нет требований к SLA, не определён владелец данных.',
+        suggestedReply:'Максим Сергеевич, добрый день! Замечания обоснованы. Дополню ТЗ разделами по формату выгрузки и SLA, владельца данных зафиксируем на рабочей группе.',
+        body:'Посмотрел ТЗ. Замечания:\n\n1. Не описан формат итоговой выгрузки — CSV или XLSX, кодировка\n2. Отсутствуют требования к времени формирования отчёта\n3. Не определён владелец данных со стороны бизнеса\n\nБез этого на разработку отдавать рано.' }),
+
+    mk(1*D + 6.5*H, 'Aleksandra S Abakumova', 'as.abakumova@svo.su',
+      'Приглашение: рабочая группа по МТО, четверг 15:00',
+      { priority:2, isReplied:true,
+        summary:'Рабочая группа по МТО в четверг в 15:00, зал 412.',
+        body:'Приглашаю на рабочую группу по МТО.\n\nЧетверг, 15:00, зал 412.\nПовестка: статус внедрения, замечания ОЭ, план на сентябрь.' }),
+
+    mk(1*D + 8*H, 'support_edms@svo.aero', 'support_edms@svo.aero',
+      'Заявка SD-77410 закрыта',
+      { priority:3,
+        summary:'Заявка по настройке доступа к сетевой папке закрыта.',
+        body:'Заявка SD-77410 «Доступ к сетевой папке отчётов МТО» выполнена и закрыта. Оцените качество обслуживания по ссылке.' }),
+
+    mk(1*D + 9*H, 'Konstantin I Eremin', 'ki.eremin@svo.su',
+      'Согласовано: перечень оборудования к списанию',
+      { priority:3, isReplied:true,
+        summary:'Перечень оборудования к списанию согласован без замечаний.',
+        body:'Перечень согласован, замечаний нет. Направляйте в комиссию.' }),
+
+    mk(1*D + 10*H, 'Sergey A Radishevskiy', 'sa.radishevskiy@svo.su',
+      'Вопрос по интеграции с системой учёта',
+      { priority:2, needsReply:true,
+        summary:'Уточняет, кто отвечает за интеграцию с системой учёта и есть ли согласованный контур обмена.',
+        suggestedReply:'Сергей Александрович, добрый день! Ответственный за интеграцию — отдел разработки, контур обмена согласован в апреле. Направлю схему отдельным письмом.',
+        body:'Добрый день!\n\nПри разборе инцидента всплыл вопрос: кто отвечает за интеграцию с системой учёта? В документации ответственный не указан.\n\nИ второе — согласован ли контур обмена данными? Служба безопасности задаёт вопросы.' }),
+
+    /* ─── позавчера и старше ─── */
+    mk(2*D + 2*H, 'Anna S Kalacheva', 'as.kalacheva@svo.su',
+      'Свод замечаний по итогам аудита процессов',
+      { priority:2, needsReply:true,
+        summary:'По итогам аудита 9 замечаний, 3 из них критические, срок устранения — месяц.',
+        suggestedReply:'Анна Сергеевна, добрый день! План устранения замечаний подготовлю к следующей неделе. По трём критическим предложу сроки отдельно.',
+        body:'Направляю свод замечаний по итогам аудита.\n\nВсего 9 замечаний, из них 3 критических:\n— отсутствие регламента резервного копирования\n— неразграниченный доступ к данным МТО\n— отсутствие журнала изменений конфигурации\n\nСрок устранения — 30 календарных дней.' }),
+
+    mk(2*D + 4*H, 'Aleksandr M Bocharov', 'am.bocharov@svo.su',
+      'К сведению: изменения в структуре департамента',
+      { priority:2, senderTag:'E_TOP',
+        summary:'С 1 сентября отдел эксплуатации переходит в прямое подчинение департамента.',
+        body:'Информирую: с 1 сентября отдел эксплуатации переходит в прямое подчинение департамента. Приказ подписан, кадровые вопросы решаются в рабочем порядке.' }),
+
+    mk(2*D + 6*H, 'Портал ОУИ', 'SHPortal@svo.aero',
+      'Обновлена страница «Архитектура ReportMTO»',
+      { priority:3,
+        summary:'Обновлена страница с архитектурой ReportMTO — добавлен раздел про кэширование.',
+        body:'Пользователь обновил страницу «Архитектура ReportMTO». Изменения: добавлен раздел «Кэширование запросов», уточнена схема потоков данных.' }),
+
+    mk(2*D + 8*H, 'Инфостарт', 'news@infostart.ru',
+      'Напоминание: график отпусков на следующий год',
+      { priority:3,
+        summary:'Напоминание о сроках подачи графика отпусков — до 1 декабря.',
+        body:'Напоминаем: график отпусков подразделения принимается до 1 декабря. Форма в общей папке.' }),
+
+    mk(3*D + 1*H, 'Egor V Stolyarov', 'ev.stolyarov@svo.su',
+      'Поручение по итогам оперативного совещания',
+      { priority:1, isReplied:true, senderTag:'E_TOP',
+        summary:'Поручение подготовить сравнение двух вариантов внедрения — исполнено, отчёт направлен.',
+        body:'По итогам совещания поручаю подготовить сравнение двух вариантов внедрения с оценкой стоимости владения на 3 года. Срок — неделя.' }),
+
+    mk(3*D + 3*H, 'Olga A Timonina', 'oa.timonina@svo.su',
+      'Данные по простоям за июль',
+      { priority:3, isReplied:true,
+        summary:'Направлены данные по простоям оборудования за июль.',
+        body:'Направляю данные по простоям за июль в разрезе подразделений. Отдельным листом — сравнение с июнем.' }),
+
+    mk(3*D + 5*H, 'Контур', 'noreply@kontur.ru',
+      'Восстановлено: узел app-02',
+      { priority:3,
+        summary:'Узел app-02 вернулся в норму после освобождения дискового пространства.',
+        body:'Узел app-02: состояние NORMAL. Использование диска 62%. Время восстановления 09:59.' }),
+
+    mk(3*D + 7*H, 'Larisa N Firsova', 'ln.firsova@svo.su',
+      'Проект приказа о вводе в промышленную эксплуатацию',
+      { priority:2, isReplied:true,
+        summary:'Проект приказа о вводе системы в промышленную эксплуатацию направлен на ознакомление.',
+        body:'Направляю проект приказа о вводе в промышленную эксплуатацию. Прошу ознакомиться, замечания принимаются до конца недели.' }),
+
+    mk(4*D + 2*H, 'Anton V Gavrin', 'av.gavrin@svo.su',
+      'Фотоотчёт с площадки ангара №3',
+      { priority:3,
+        summary:'Фотоотчёт с площадки опытной эксплуатации.',
+        body:'Прикладываю фотоотчёт с площадки. Рабочие места оборудованы, зарядные станции установлены.' }),
+
+    mk(4*D + 4*H, 'Поддержка HRlink', 'help@hrlink.ru',
+      'Дайджест ИТ-департамента, выпуск 34',
+      { priority:3,
+        summary:'Еженедельный дайджест ИТ-департамента.',
+        body:'В выпуске: итоги квартала, новые сервисы, изменения в регламентах доступа.' }),
+
+    mk(4*D + 9*H, 'Sergey V Potapov', 'sv.potapov@svo.su',
+      'Согласовано: перенос сроков этапа 2',
+      { priority:3, isReplied:true,
+        summary:'Перенос сроков второго этапа согласован, новая дата — 15 сентября.',
+        body:'Перенос согласован. Новая контрольная дата — 15 сентября. Прошу отразить в плане-графике.' })
+  ];
+
+  // пара писем уже в работе и отработана — чтобы очереди не были пустыми
+  EMAILS.find(e => e.subject.includes('Инцидент')).workState = 'done';
+  EMAILS.find(e => e.subject.includes('Инцидент')).stateAt = iso(now - 5*H);
+  EMAILS.find(e => e.subject.includes('обучения')).workState = 'wip';
+  EMAILS.find(e => e.subject.includes('обучения')).stateAt = iso(now - 2*H);
+  EMAILS.find(e => e.subject.includes('аудита')).workState = 'done';
+  EMAILS.find(e => e.subject.includes('аудита')).stateAt = iso(now - 26*H);
+
+  // бэкенд сам проставляет E_TOP/E_DIR по транслитерации ФИО
+  const TOP = ['Stolyarov','Bocharov','Tyukova'];
+  const DIR = ['Timonina','Firsova','Potapov','Radishevskiy','Rylskikh','Korolev',
+               'Gavrin','Polyakov','Abakumova','Kalacheva','Eremin'];
+  EMAILS.forEach(e => {
+    const last = (e.senderName || '').split(/\s+/).pop();
+    if (TOP.includes(last)) e.senderTag = 'E_TOP';
+    else if (DIR.includes(last)) e.senderTag = 'E_DIR';
+  });
+
+  const SETTINGS = {
+    e_top: 'Столяров Егор Валерьевич, Бочаров Александр Михайлович, Тюкова Наталья Валерьевна',
+    e_dir: 'Тимонина Ольга Александровна, Фирсова Лариса Николаевна, Потапов Сергей Владимирович, ' +
+           'Радишевский Сергей Александрович, Рыльских Наталья Николаевна, Королев Андрей Викторович, ' +
+           'Гаврин Антон Васильевич, Поляков Максим Сергеевич, Абакумова Александра Сергеевна, ' +
+           'Калачева Анна Сергеевна, Еремин Константин Иванович',
+    e_top_emails: 'ev.stolyarov@svo.su, am.bocharov@svo.su, nv.tyukova@svo.su',
+    e_dir_emails: 'oa.timonina@svo.su, ln.firsova@svo.su, sv.potapov@svo.su, sa.radishevskiy@svo.su, ' +
+                  'nn.rylskih@svo.su, av.korolev@svo.su, av.gavrin@svo.su, ms.polyakov@svo.su, ' +
+                  'as.abakumova@svo.su, as.kalacheva@svo.su, ki.eremin@svo.su',
+    default_days: 4,
+    max_emails: 40, max_body_chars: 800, batch_size: 15,
+    base_url: 'https://api.deepseek.com', model: 'deepseek-chat',
+    api_key_set: true, api_key_hint: 'sk-1…9f2c',
+    skip_weekends: true, skip_ai_for_system: true, subject_block: 'принято, отклонено',
+    mark_read_on_done: true,
+    read_detection: { method: 'doc.GetRead()', reliable: true, detail: 'CN=Demo User/O=SVO' }
+  };
+
+  const PAYLOAD = {
+    emails: EMAILS,
+    read_detection: SETTINGS.read_detection,
+    synced_at: iso(now - 20 * 60000),
+    days: 4
+  };
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const ok = data => ({ ok: true, status: 200, json: async () => data });
+
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const req = opts && opts.body ? JSON.parse(opts.body) : {};
+
+    if (u.includes('/api/settings')) return ok(SETTINGS);
+    if (u.includes('/api/data') || u.includes('dashboard_data.json')) return ok(PAYLOAD);
+    if (u.includes('/api/set-state')) { await wait(80); return ok({ status:'ok' }); }
+    if (u.includes('/api/clear')) {
+      await wait(150);
+      const what = req.what || 'all';
+      return ok({ status:'ok', removed: what === 'emails' ? ['собранные письма']
+                              : what === 'state' ? ['отметки отработки']
+                              : ['собранные письма','отметки отработки'] });
+    }
+
+    if (u.includes('/api/analyze')) {
+      await wait(req.skip_ai ? 700 : 1800);   // имитация чтения Notes и AI-разбора
+      return ok(PAYLOAD);
+    }
+    if (u.includes('/api/mark-read')) {
+      await wait(150);
+      return ok({ status: 'ok', is_read: req.is_read, verified: true });
+    }
+    if (u.includes('/api/reply')) {
+      await wait(400);
+      return ok({ status: 'ok', lotus_url: 'notes:///0000DEMO/0/DRAFT' });
+    }
+    if (u.includes('/api/save-settings')) {
+      await wait(200);
+      Object.assign(SETTINGS, req);
+      if (req.e_top_emails) SETTINGS.e_top_emails = req.e_top_emails;
+      if (req.e_dir_emails) SETTINGS.e_dir_emails = req.e_dir_emails;
+      return ok({ status:'ok', e_top_emails: SETTINGS.e_top_emails, e_dir_emails: SETTINGS.e_dir_emails });
+    }
+    return ok({});
+  };
+})();
+</script>
 
 <script>
 /* ═══════════════ МОДЕЛЬ ═══════════════
@@ -1206,6 +1527,14 @@ document.querySelectorAll('.overlay').forEach(o => {
 });
 
 init();
+</script>
+
+<script>
+window.openLotus = function (url) {
+  toast(url && url.includes('DRAFT') ? 'Демо: черновик открылся бы в Lotus Notes'
+                                     : 'Демо: письмо открылось бы в Lotus Notes');
+};
+document.title = 'Демо · Почта руководителя';
 </script>
 </body>
 </html>

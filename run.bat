@@ -3,6 +3,7 @@ chcp 65001 >nul
 title Restart notes_gemini
 
 echo Stopping old process...
+cd c:\Projects\LOTUS
 powershell -Command "Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*notes_gemini*' -or $_.Path -like '*python*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
 
 echo Starting notes_gemini...
