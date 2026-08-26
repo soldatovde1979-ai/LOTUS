@@ -24,8 +24,10 @@ warnings.filterwarnings("ignore")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "set.ini")
 PROMPT_FILE = os.path.join(BASE_DIR, "prompt_template.txt")
+DIGEST_FILE = os.path.join(BASE_DIR, "digest_template.txt")
 DATA_FILE = os.path.join(BASE_DIR, "dashboard_data.json")
 STATE_FILE = os.path.join(BASE_DIR, "work_state.json")
+SEEN_FILE = os.path.join(BASE_DIR, "seen_mail.json")
 ANALYSIS_LOCK = threading.Lock()
 
 # Как именно удалось определить прочитанность в последнем сборе (уходит в UI)
@@ -218,7 +220,10 @@ def probe_get_read(db, session):
         print(f"[+] Метки прочтения: doc.GetRead() (пользователь: {username or 'текущий ID'})")
         return True, username
     except Exception as e:
-        print(f"[!] doc.GetRead() недоступен: {e}")
+        if _missing_api(e):
+            print("[i] doc.GetRead() в этой сборке Notes отсутствует — ожидаемо")
+        else:
+            print(f"[!] doc.GetRead() недоступен: {e}")
         return False, username
 
 
@@ -313,18 +318,30 @@ def fetch_all_unread(db):
     return out
 
 
+def _missing_api(err):
+    """Отличает «метода нет в этой сборке Notes» от настоящей поломки."""
+    return "has no attribute" in str(err) or "Unknown name" in str(err)
+
+
 def gather_unread_sources(db, tag=""):
     """Опрашивает ВСЕ доступные способы получить непрочитанные.
-    Возвращает {название источника: множество UNID}."""
+    Возвращает {название источника: множество UNID}.
+
+    В сборках без Domino Objects 8 половины этих методов просто нет.
+    Это не ошибка, поэтому печатаем один итог, а не шесть строк подряд."""
     found = {}
     suffix = f" [{tag}]" if tag else ""
+    absent, broken = [], []
 
-    try:
-        s = fetch_all_unread(db)
-        if s is not None:
-            found["GetAllUnreadDocuments" + suffix] = s
-    except Exception as e:
-        print(f"[i] GetAllUnreadDocuments{suffix}: недоступен ({e})")
+    def probe(name, fn):
+        try:
+            s = fn()
+            if s is not None:
+                found[name] = s
+        except Exception as e:
+            (absent if _missing_api(e) else broken).append((name, e))
+
+    probe("GetAllUnreadDocuments" + suffix, lambda: fetch_all_unread(db))
 
     for vname in ("($Inbox)", "($All)"):
         try:
@@ -336,13 +353,14 @@ def gather_unread_sources(db, tag=""):
         for label, fn in (("GetAllUnreadEntries", unread_via_get_all_unread_entries),
                           ("CreateViewNavFromAllUnread", unread_via_nav_all_unread),
                           ("обход IsUnread", unread_via_entry_scan)):
-            name = f"{label} {vname}{suffix}"
-            try:
-                s = fn(view)
-                if s is not None:
-                    found[name] = s
-            except Exception as e:
-                print(f"[i] {name}: недоступен ({e})")
+            probe(f"{label} {vname}{suffix}", lambda f=fn, v=view: f(v))
+
+    if absent:
+        where = f" ({tag})" if tag else ""
+        print(f"[i] Методов меток прочтения нет в этой сборке Notes{where}: {len(absent)} "
+              f"— это ожидаемо, работает запасной режим «новое с прошлого сбора»")
+    for name, e in broken:
+        print(f"[!] {name}: неожиданная ошибка ({e})")
     return found
 
 
@@ -364,7 +382,10 @@ def open_local_replica(session, db_server):
             return None
         return local
     except Exception as e:
-        print(f"[i] Локальная реплика недоступна: {e}")
+        if "не существует" in str(e) or "does not exist" in str(e).lower():
+            print("[i] Локальной реплики почты на этой машине нет — работаем с сервером")
+        else:
+            print(f"[i] Локальная реплика недоступна: {e}")
         return None
 
 
@@ -459,6 +480,8 @@ def apply_work_state(emails):
         if rec:
             e["workState"] = rec.get("status", "new")
             e["stateAt"] = rec.get("updated", "")
+            if rec.get("draft"):
+                e["draft"] = rec["draft"]
             if e["workState"] != "new":
                 restored += 1
         else:
@@ -469,16 +492,34 @@ def apply_work_state(emails):
     return emails
 
 
-def set_work_state(unid, status):
+def set_work_state(unid, status, draft=None):
     if status not in VALID_STATES:
         return False, f"недопустимое состояние: {status}"
     st = load_work_state()
     if status == "new":
         st.pop(unid, None)
     else:
-        st[unid] = {"status": status,
-                    "updated": datetime.now().isoformat(timespec="seconds")}
+        rec = st.get(unid, {})
+        rec["status"] = status
+        rec["updated"] = datetime.now().isoformat(timespec="seconds")
+        if draft:
+            rec["draft"] = {"text": str(draft)[:4000],
+                            "at": datetime.now().isoformat(timespec="seconds")}
+        st[unid] = rec
     return save_work_state(st), None
+
+
+def save_draft(unid, text):
+    """Запоминает созданный через дашборд черновик, чтобы было видно,
+    что именно вы написали, пока письмо не отправлено."""
+    st = load_work_state()
+    rec = st.get(unid, {"status": "wip"})
+    rec.setdefault("status", "wip")
+    rec["updated"] = datetime.now().isoformat(timespec="seconds")
+    rec["draft"] = {"text": str(text or "")[:4000],
+                    "at": datetime.now().isoformat(timespec="seconds")}
+    st[unid] = rec
+    return save_work_state(st)
 
 
 class ReadResolver:
@@ -680,6 +721,287 @@ def tag_emails_by_persons(cfg, emails):
     return emails
 
 
+# ============================================================================
+#  «НОВОЕ С ПРОШЛОГО СБОРА»
+#  Запасной признак новизны, когда Notes не отдаёт метки прочтения.
+#  В сборках Domino Objects старше 8.0 нет ни GetRead, ни GetAllUnreadEntries,
+#  ни ViewEntry.IsUnread — читать метки физически нечем. Тогда дашборд
+#  запоминает, какие письма он уже показывал, и новыми считает те,
+#  которых в прошлый раз не было.
+# ============================================================================
+
+SEEN_KEEP_DAYS = 90
+
+
+def load_seen():
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_seen(seen):
+    cutoff = (datetime.now() - timedelta(days=SEEN_KEEP_DAYS)).isoformat(timespec="seconds")
+    trimmed = {k: v for k, v in seen.items() if v >= cutoff}
+    try:
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(trimmed, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"[!] Не удалось сохранить {SEEN_FILE}: {e}")
+        return False
+
+
+def flag_new_since_last_sync(emails):
+    """Помечает письма, которых не было в прошлом сборе.
+    Возвращает (сколько новых, был ли это самый первый сбор)."""
+    seen = load_seen()
+    first_run = not seen
+    now = datetime.now().isoformat(timespec="seconds")
+    new_count = 0
+
+    for e in emails:
+        unid = e.get("unid", "")
+        if not unid:
+            continue
+        if first_run:
+            # На первом запуске новым было бы всё — это бесполезно.
+            e["isRead"] = True
+        else:
+            is_new = unid not in seen
+            e["isRead"] = not is_new
+            if is_new:
+                new_count += 1
+        seen.setdefault(unid, now)
+
+    save_seen(seen)
+    return new_count, first_run
+
+
+def forget_seen():
+    try:
+        if os.path.exists(SEEN_FILE):
+            os.remove(SEEN_FILE)
+        return True
+    except Exception:
+        return False
+
+
+def mark_seen(unid, seen_state=True):
+    """Ручное переключение «новое / просмотрено», когда меток Notes нет."""
+    seen = load_seen()
+    if seen_state:
+        seen[unid] = datetime.now().isoformat(timespec="seconds")
+    else:
+        seen.pop(unid, None)
+    return save_seen(seen)
+
+
+# ============================================================================
+#  ДЕЙСТВИЯ И ТРЕДЫ
+# ============================================================================
+
+# Письма систем (1С:ДО, Ivanti, СЭД, порталы) часто несут настоящие
+# согласования. Отсеивать их по отправителю нельзя — только по смыслу темы.
+ACTION_HINTS = re.compile(
+    r'согласов|подписать|подпишите|подписание|рассмотрет|исполнить|утвердит|'
+    r'виза|завизир|требует|требуется|необходимо ваше|ваше участие|просрочен|'
+    r'поручен|ознакомить|прошу|срок выполнения|подошел срок|на подпись',
+    re.I)
+
+PURE_NOISE = re.compile(
+    r'пользователи с полными правами|отчет по изменениям данных|дайджест|'
+    r'уведомление безопасности|статистика дефектов|нет на работе|'
+    r'обновление сведений|принят закон|изменится ли|какие штрафы',
+    re.I)
+
+# Префиксы переписки и календарных уведомлений Notes
+REPLY_PREFIX = re.compile(
+    r'^\s*(?:(?:re|fw|fwd|ha|на|нa|отв|>>|вн|accepted|declined|tentative|'
+    r'отменено|перенесено|приглашение|запланировано повторно|обновление сведений)'
+    r'\s*:\s*)+', re.I)
+
+
+def carries_action(subject, body=""):
+    """Есть ли в письме требование действия — независимо от отправителя."""
+    text = f"{subject or ''} {(body or '')[:300]}"
+    if PURE_NOISE.search(subject or ""):
+        return False
+    return bool(ACTION_HINTS.search(text))
+
+
+def thread_key(subject, unid=""):
+    """Ключ переписки: «HA: >>: RE: ПКМ ШХ» и «ПКМ ШХ» — одна ветка.
+    Пустые и односимвольные темы в ветки НЕ объединяются: у вас четыре разных
+    письма без темы, и показывать их как переписку — обман."""
+    s = str(subject or "").strip()
+    prev = None
+    while prev != s:
+        prev = s
+        s = REPLY_PREFIX.sub("", s).strip()
+    s = re.sub(r'\s+', ' ', s.lower())
+    s = re.sub(r'[«»"\'“”]', '', s).strip()
+    if len(s) < 3:
+        return f"__solo__{unid or s}"
+    return s
+
+
+def group_threads(emails):
+    """Проставляет письмам ключ ветки и её размер."""
+    groups = {}
+    for e in emails:
+        k = thread_key(e.get("subject"), e.get("unid", ""))
+        e["threadKey"] = k
+        groups.setdefault(k, []).append(e)
+    for k, items in groups.items():
+        items.sort(key=lambda x: x.get("dateIso") or "", reverse=True)
+        for i, e in enumerate(items):
+            e["threadSize"] = len(items)
+            e["threadLatest"] = (i == 0)
+    return emails
+
+
+# ============================================================================
+#  ВАШИ ОТВЕТЫ
+#  Отметка «Отвечено» бралась из флага Notes и ничего не показывала.
+#  Сам ответ лежит отдельным документом в «Отправленных», поэтому его
+#  надо забрать и привязать к исходному письму.
+# ============================================================================
+
+QUOTE_MARKERS = re.compile(
+    r'\n\s*(?:-{3,}\s*(?:original message|пересылаемое|исходное сообщение)|'
+    r'_{5,}|от\s*(?:кого)?\s*:|from\s*:|отправлено\s*:|sent\s*:|'
+    r'\d{1,2}[./]\d{1,2}[./]\d{2,4}.{0,40}(?:написал|wrote))',
+    re.I)
+
+
+def message_id(doc):
+    for field in ("$MessageID", "Message-ID", "MessageID"):
+        try:
+            if doc.HasItem(field):
+                val = str(doc.GetItemValue(field)[0]).strip()
+                if val:
+                    return val
+        except Exception:
+            pass
+    return ""
+
+
+def strip_quoted(text, limit=700):
+    """Оставляет только то, что вы написали, без цитаты исходного письма."""
+    t = str(text or "").strip()
+    m = QUOTE_MARKERS.search(t)
+    if m and m.start() > 20:
+        t = t[:m.start()]
+    t = re.sub(r'\n{3,}', '\n\n', t).strip()
+    return t[:limit]
+
+
+def collect_sent(db, start_date, limit=400):
+    """Письма, отправленные вами за период."""
+    try:
+        query = (f'Form = "Memo" & @IsAvailable(PostedDate) '
+                 f'& !@IsAvailable(DeliveredDate) & PostedDate >= [{start_date}]')
+        coll = db.Search(query, None, 0)
+    except Exception as e:
+        print(f"[i] Отправленные прочитать не удалось: {e}")
+        return []
+
+    sent, doc, n = [], None, 0
+    try:
+        doc = coll.GetFirstDocument()
+    except Exception:
+        return []
+
+    while doc is not None and n < limit:
+        try:
+            subject = doc.GetItemValue("Subject")[0] if doc.HasItem("Subject") else ""
+            posted = doc.GetItemValue("PostedDate")[0] if doc.HasItem("PostedDate") else doc.Created
+            body = ""
+            if doc.HasItem("Body"):
+                item = doc.GetFirstItem("Body")
+                if item is not None and hasattr(item, "Text"):
+                    body = item.Text
+            refs = []
+            for field in ("InReplyTo", "In-Reply-To", "$RefOptions"):
+                try:
+                    if doc.HasItem(field):
+                        for v in doc.GetItemValue(field):
+                            v = str(v).strip()
+                            if v:
+                                refs.append(v)
+                except Exception:
+                    pass
+            sent.append({
+                "unid": str(doc.UniversalID).strip(),
+                "dateIso": to_iso(posted),
+                "subject": str(subject),
+                "threadKey": thread_key(subject, str(doc.UniversalID).strip()),
+                "text": strip_quoted(re.sub(r'\r', '', body)),
+                "refs": refs,
+            })
+            n += 1
+        except Exception:
+            pass
+        try:
+            doc = coll.GetNextDocument(doc)
+        except Exception:
+            break
+    return sent
+
+
+def attach_replies(db, emails, start_date):
+    """Привязывает ваши отправленные письма к исходным."""
+    sent = collect_sent(db, start_date)
+    if not sent:
+        print("[i] Отправленных писем за период не найдено")
+        return emails
+
+    by_msgid = {}
+    for e in emails:
+        mid = e.get("messageId")
+        if mid:
+            by_msgid[mid] = e
+    by_thread = {}
+    for e in emails:
+        by_thread.setdefault(e.get("threadKey"), []).append(e)
+
+    exact = fuzzy = 0
+    for s in sent:
+        target = None
+        for ref in s["refs"]:                      # точное совпадение по Message-ID
+            if ref in by_msgid:
+                target = by_msgid[ref]
+                break
+        how = "по идентификатору"
+        if target is None:                         # запасной вариант — по ветке и дате
+            candidates = [e for e in by_thread.get(s["threadKey"], [])
+                          if (e.get("dateIso") or "") < (s["dateIso"] or "")]
+            if candidates:
+                target = max(candidates, key=lambda e: e.get("dateIso") or "")
+                how = "по теме и дате"
+        if target is None:
+            continue
+
+        target.setdefault("replies", []).append(
+            {"date": s["dateIso"], "text": s["text"], "matchedBy": how})
+        target["isReplied"] = True
+        if how == "по идентификатору":
+            exact += 1
+        else:
+            fuzzy += 1
+
+    for e in emails:
+        if e.get("replies"):
+            e["replies"].sort(key=lambda r: r.get("date") or "")
+
+    print(f"[+] Ваших ответов привязано: {exact} точно, {fuzzy} по теме "
+          f"(из {len(sent)} отправленных)")
+    return emails
+
+
 def detect_replied(doc):
     """Определяет, был ли дан ответ на письмо."""
     try:
@@ -692,6 +1014,94 @@ def detect_replied(doc):
     except Exception:
         pass
     return False
+
+
+URL_RE = re.compile(r'(?:https?|notes)://[^\s<>"\'\)\]]+', re.I)
+# Ссылки 1С:ДО и ERP УХ узнаются по маркеру веб-клиента 1С
+DO_HINT = re.compile(r'e1cib|/ru_RU/|1cib|DocsHttp|edoc|/do/', re.I)
+
+
+def _rank_url(u):
+    """Чем выше, тем вероятнее это ссылка на задачу 1С:ДО, а не подпись/логотип."""
+    if DO_HINT.search(u):
+        return 3
+    if re.search(r'\.(png|jpg|gif|css|js|ico)(\?|$)', u, re.I):
+        return 0          # картинки из подписи — точно не задача
+    return 1
+
+
+def _urls_from_mime(doc):
+    """Если письмо пришло как интернет-почта, ссылки лежат в HTML-части."""
+    out = []
+    try:
+        mime = doc.GetMIMEEntity("Body")
+        if mime is None:
+            return out
+        stack = [mime]
+        guard = 0
+        while stack and guard < 60:
+            guard += 1
+            ent = stack.pop()
+            try:
+                out.extend(URL_RE.findall(str(ent.ContentAsText or "")))
+            except Exception:
+                pass
+            for nxt in (getattr(ent, "GetFirstChildEntity", lambda: None)(),
+                        getattr(ent, "GetNextSibling", lambda: None)()):
+                if nxt is not None:
+                    stack.append(nxt)
+    except Exception:
+        pass
+    return out
+
+
+def _urls_from_dxl(doc, session):
+    """Универсальный путь: выгружаем документ в DXL и вынимаем адреса
+    гиперссылок. Работает и там, где RichText-навигатор недоступен."""
+    out = []
+    if session is None:
+        return out
+    try:
+        exporter = session.CreateDXLExporter()
+        exporter.ConvertNotesBitmapsToGIF = False
+        xml = exporter.Export(doc)
+        if xml:
+            # <urllink href="..."> и просто адреса в тексте DXL
+            out.extend(re.findall(r'href\s*=\s*"([^"]+)"', str(xml), re.I))
+            out.extend(URL_RE.findall(str(xml)))
+    except Exception:
+        pass
+    return out
+
+
+def extract_do_url(doc, body_text="", session=None):
+    """URL задачи 1С:ДО. В Body.Text его нет — это гиперссылка в RichText,
+    поэтому текстовый разбор её не видит. Пробуем MIME, затем DXL,
+    затем обычный текст (вдруг адрес всё-таки написан словами)."""
+    candidates = []
+    candidates.extend(URL_RE.findall(body_text or ""))
+    if not any(_rank_url(u) >= 3 for u in candidates):
+        candidates.extend(_urls_from_mime(doc))
+    if not any(_rank_url(u) >= 3 for u in candidates):
+        candidates.extend(_urls_from_dxl(doc, session))
+
+    best, best_rank = "", 0
+    seen = set()
+    for u in candidates:
+        u = str(u).strip().rstrip('.,;')
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        r = _rank_url(u)
+        if r > best_rank:
+            best, best_rank = u, r
+    return best
+
+
+def mentions_do_task(subject, body):
+    """Письмо ссылается на задачу документооборота."""
+    blob = f"{subject or ''} {body or ''}"
+    return bool(re.search(r'1С:ДО|1C:ДО|Ссылка на задачу|ERP\s*УХ|Документооборот', blob, re.I))
 
 
 def get_mail_database(session):
@@ -792,16 +1202,40 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
     if count == 0:
         return []
 
+    # Первый проход: только даты. Нужен, чтобы при упоре в лимит остались
+    # СВЕЖИЕ письма, а не первые попавшиеся в порядке выдачи Notes.
+    keep_unids = None
+    if count > max_emails:
+        stamps = []
+        d = collection.GetFirstDocument()
+        while d is not None:
+            try:
+                dv = d.GetItemValue("DeliveredDate")[0] if d.HasItem("DeliveredDate") else d.Created
+                stamps.append((to_iso(dv), str(d.UniversalID).strip()))
+            except Exception:
+                pass
+            d = collection.GetNextDocument(d)
+        stamps.sort(reverse=True)
+        keep_unids = {u for _, u in stamps[:max_emails]}
+        print(f"[!] Найдено {count} писем, лимит — {max_emails}. Оставляю {max_emails} самых свежих;")
+        print(f"    {count - max_emails} писем НЕ попадут в разбор. Поднимите «Максимум писем"
+              f" за сбор» в настройках, если нужен весь поток.")
+
     emails = []
     verdict_list = []          # мнения источников по каждому письму
     doc = collection.GetFirstDocument()
     idx = 1
     skipped_by_subject = 0
+    skipped_by_limit = max(0, count - max_emails)
 
     while doc is not None:
         try:
             subject = doc.GetItemValue("Subject")[0] if doc.HasItem("Subject") else "(Без темы)"
             sender = doc.GetItemValue("From")[0] if doc.HasItem("From") else "(Неизвестный)"
+            if keep_unids is not None and str(doc.UniversalID).strip() not in keep_unids:
+                doc = collection.GetNextDocument(doc)
+                continue
+
             hit = subject_blocked(subject, blocked_patterns)
             if hit:
                 skipped_by_subject += 1
@@ -823,6 +1257,13 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
             clean_body = re.sub(r'\s+', ' ', body_text)[:max_chars]
             date_display = str(delivered)[:16]
             lotus_link = f"notes:///{replica_id}/0/{unid}"
+            # ссылка на задачу 1С:ДО живёт в RichText, а не в тексте письма
+            do_link = ""
+            if mentions_do_task(subject, body_text):
+                try:
+                    do_link = extract_do_url(doc, body_text, session)
+                except Exception as link_err:
+                    print(f"[i] Ссылку 1С:ДО достать не удалось: {link_err}")
 
             print(f"  #{idx:02d} {str(sender)[:24]} | {str(subject)[:40]}")
 
@@ -831,6 +1272,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
                 "id": str(idx),
                 "unid": unid,
                 "lotus_url": lotus_link,
+                "do_url": do_link,
                 "date": date_display,
                 "dateIso": to_iso(delivered),
                 "senderName": clean_sender_name(sender),
@@ -841,13 +1283,20 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
                 "isReplied": is_replied,
                 "needsReply": False,
                 "priority": 3,
+                "kind": "",
+                "ask": "",
+                "deadline": "",
+                "overdue": False,
+                "waitingOn": "",
+                "risk": "",
+                "carriesAction": carries_action(subject, clean_body),
+                "messageId": message_id(doc),
+                "replies": [],
                 "body": clean_body,
                 "summary": "",
                 "threadMessages": [{"text": clean_body}]
             })
             idx += 1
-            if len(emails) >= max_emails:
-                break
         except Exception as doc_err:
             print(f"[!] Пропуск: {doc_err}")
 
@@ -856,59 +1305,308 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
     total = len(emails)
     if skipped_by_subject:
         print(f"[i] Отсеяно по фильтру тем: {skipped_by_subject}")
+    do_found = sum(1 for e in emails if e.get("do_url"))
+    do_wanted = sum(1 for e in emails if mentions_do_task(e.get("subject"), e.get("body")))
+    if do_wanted:
+        print(f"[i] Писем с задачами 1С:ДО: {do_wanted}, ссылка извлечена у {do_found}")
+        if not do_found:
+            print("    Ссылки лежат гиперссылками в RichText; ни MIME, ни DXL их не отдали — "
+                  "кнопка «Открыть в ДО» покажется только там, где адрес удалось достать.")
 
     # Источник меток выбираем ПОСЛЕ сбора — когда видно, что каждый из них насчитал
     source = resolver.decide(verdict_list, total)
     unread_count = 0
-    for e, v in zip(emails, verdict_list):
-        if source and source in v:
+
+    if source:
+        for e, v in zip(emails, verdict_list):
             e["isRead"] = not v[source]
             e["readKnown"] = True
-        else:
-            e["isRead"] = True
+            e["readSource"] = "notes"
+            if not e["isRead"]:
+                unread_count += 1
+        # даже при рабочих метках ведём журнал показанных писем —
+        # он пригодится, если Notes перестанет отвечать
+        flag_new_since_last_sync([dict(e) for e in emails])
+        print(f"[+] Итог: {total} писем, непрочитанных {unread_count}")
+    else:
+        unread_count, first_run = flag_new_since_last_sync(emails)
+        for e in emails:
             e["readKnown"] = False
-        if not e["isRead"]:
-            unread_count += 1
+            e["readSource"] = "dashboard"
+        if first_run:
+            print(f"[i] Первый сбор: все {total} писем приняты за известные. "
+                  f"Новыми будут отмечены письма, пришедшие к следующему сбору.")
+            READ_DETECTION.update(
+                method="новое с прошлого сбора", reliable=True,
+                detail="Notes не отдаёт метки прочтения, поэтому новизну считает сам дашборд. "
+                       "Это первый сбор — новые письма появятся начиная со следующего.")
+        else:
+            print(f"[+] Итог: {total} писем, новых с прошлого сбора {unread_count}")
+            READ_DETECTION.update(
+                method="новое с прошлого сбора", reliable=True,
+                detail="Notes не отдаёт метки прочтения (эти функции появились в Domino Objects 8.0). "
+                       "Новыми считаются письма, которых не было в прошлом сборе.")
 
-    print(f"[+] Итог: {total} писем, непрочитанных {unread_count}")
     READ_DETECTION["unread"] = unread_count
     READ_DETECTION["total"] = total
+    READ_DETECTION["skipped_by_limit"] = skipped_by_limit
+    READ_DETECTION["skipped_by_subject"] = skipped_by_subject
+    READ_DETECTION["found_total"] = count
+    emails = group_threads(emails)
+    try:
+        emails = attach_replies(db, emails, start_date)
+    except Exception as rep_err:
+        print(f"[!] Привязка ответов пропущена: {rep_err}")
     return apply_work_state(emails)
 
 
 def set_doc_read_status(unid, read_state=True):
-    """Меняет статус прочтения. Возвращает (успех, фактический_статус_прочитано|None)."""
+    """Меняет статус прочтения.
+    Возвращает (успех, фактический_статус|None, каким способом)."""
     try:
         session = win32com.client.Dispatch("Lotus.NotesSession")
         session.Initialize()
         db = get_mail_database(session)
         doc = db.GetDocumentByUNID(unid)
         if not doc:
-            return False, None
+            return False, None, "none"
 
         username = _session_username(session)
+        try:
+            if read_state:
+                try:
+                    doc.MarkRead(username) if username else doc.MarkRead()
+                except TypeError:
+                    doc.MarkRead()
+            else:
+                try:
+                    doc.MarkUnread(username) if username else doc.MarkUnread()
+                except TypeError:
+                    doc.MarkUnread()
+        except Exception as mark_err:
+            # MarkRead/MarkUnread появились в Notes 8 — в старом COM их нет
+            print(f"[i] MarkRead недоступен ({mark_err}) — отмечаю в журнале дашборда")
+            ok = mark_seen(unid, read_state)
+            return ok, read_state, "dashboard"
 
-        if read_state:
-            try:
-                doc.MarkRead(username) if username else doc.MarkRead()
-            except Exception:
-                doc.MarkRead()
-        else:
-            try:
-                doc.MarkUnread(username) if username else doc.MarkUnread()
-            except Exception:
-                doc.MarkUnread()
-
-        # Проверяем, что Notes действительно применил метку
         actual = None
         try:
             actual = _call_get_read(doc, username)
         except Exception:
             pass
-        return True, actual
+        mark_seen(unid, read_state)
+        return True, actual, "notes"
     except Exception as e:
         print(f"[!] Ошибка смены статуса UNID {unid}: {e}")
-    return False, None
+    return False, None, "none"
+
+
+# ============================================================================
+#  СВОДКА И ЧАТ ПО ПОЧТЕ
+# ============================================================================
+
+def ask_model(messages, temperature=0.2, timeout=180.0, expect_json=True):
+    """Один запрос к модели. Возвращает (данные|текст, ошибка)."""
+    cfg = load_config()
+    api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
+    base_url = cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/")
+    model = cfg.get("DEEPSEEK", "model", fallback="deepseek-chat").strip()
+    if not api_key:
+        return None, "не задан ключ API в настройках"
+
+    payload = {"model": model, "messages": messages,
+               "temperature": temperature, "stream": False}
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
+            method="POST")
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        text = data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return None, str(e)
+
+    if not expect_json:
+        return text, None
+
+    if text.startswith("```"):
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+    m = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', text)
+    if m:
+        text = m.group(1)
+    try:
+        return json.loads(text), None
+    except json.JSONDecodeError as e:
+        return None, f"модель вернула не JSON: {e}"
+
+
+def compact_index(emails, limit=220, body_chars=0, body_for=60):
+    """Сжатая выжимка почты для запросов «по всему потоку»."""
+    def weight(e):
+        w = 0
+        if e.get("senderTag") == "E_TOP": w -= 40
+        elif e.get("senderTag") == "E_DIR": w -= 25
+        if e.get("overdue"): w -= 30
+        if e.get("kind") in ("Согласование", "Поручение"): w -= 20
+        if e.get("waitingOn") == "me": w -= 15
+        w += (e.get("priority") or 3) * 5
+        if e.get("workState") == "done": w += 50
+        return w
+
+    picked = sorted(emails, key=weight)[:limit]
+    out = []
+    for pos, e in enumerate(picked):
+        item = {
+            "id": e.get("id"),
+            "date": (e.get("dateIso") or e.get("date") or "")[:10],
+            "from": e.get("senderName"),
+            "subject": (e.get("subject") or "")[:110],
+            "summary": (e.get("summary") or "")[:160],
+        }
+        for key, src in (("tag", "senderTag"), ("kind", "kind"), ("ask", "ask"),
+                         ("deadline", "deadline"), ("waiting_on", "waitingOn"),
+                         ("risk", "risk"), ("state", "workState")):
+            val = e.get(src)
+            if val and val not in ("new", "none"):
+                item[key] = val
+        if e.get("overdue"):
+            item["overdue"] = True
+        if e.get("priority"):
+            item["priority"] = f"P{e['priority']}"
+        # тела прикладываем только к самым важным письмам — иначе запрос
+        # раздувается до десятков тысяч токенов и ответ приходит долго
+        if body_chars and pos < body_for:
+            item["body"] = (e.get("body") or "")[:body_chars]
+        out.append(item)
+    return out
+
+
+def build_digest(emails, days):
+    """AI-сводка по всему собранному потоку."""
+    if not emails:
+        return None, "нет писем для сводки"
+    cfg = load_config()
+    try:
+        with open(DIGEST_FILE, "r", encoding="utf-8") as f:
+            tpl = f.read()
+    except Exception:
+        return None, "не найден digest_template.txt"
+
+    prompt = (tpl
+        .replace("[[TODAY]]", datetime.now().strftime("%Y-%m-%d (%A)"))
+        .replace("[[PERIOD]]", f"последние {days} рабочих дн.")
+        .replace("[[EMAIL_COUNT]]", str(len(emails)))
+        .replace("[[E_TOP_LIST]]", cfg.get("TAGS", "e_top", fallback=""))
+        .replace("[[E_DIR_LIST]]", cfg.get("TAGS", "e_dir", fallback=""))
+        .replace("[[EMAILS_PAYLOAD]]",
+                 json.dumps(compact_index(emails), ensure_ascii=False, indent=1)))
+
+    print(f"[*] Готовлю сводку по {len(emails)} письмам...")
+    data, err = ask_model(
+        [{"role": "system", "content": "Ты ассистент руководителя. Отвечай только валидным JSON."},
+         {"role": "user", "content": prompt}], temperature=0.3)
+    if err:
+        print(f"[!] Сводка не собралась: {err}")
+        return None, err
+
+    known = {str(e.get("id")) for e in emails}
+    watch = [w for w in (data.get("watchlist") or []) if str(w.get("id")) in known][:8]
+    result = {
+        "brief": str(data.get("brief", "")).strip(),
+        "watchlist": watch,
+        "themes": (data.get("themes") or [])[:6],
+        "people": (data.get("people") or [])[:5],
+        "built_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    print(f"[✓] Сводка готова: {len(watch)} пунктов «не упустить»")
+    return result, None
+
+
+def answer_question(emails, question, history=None):
+    """Свободный вопрос по почте."""
+    if not emails:
+        return None, "почта ещё не собрана"
+    idx = compact_index(emails, limit=200, body_chars=180, body_for=60)
+    system = (
+        "Ты ассистент руководителя ИТ-блока. У тебя есть выжимка его почты в JSON. "
+        "Отвечай кратко и по делу, на русском. Опирайся ТОЛЬКО на данные из выжимки — "
+        "если сведений не хватает, так и скажи. Когда ссылаешься на письма, указывай "
+        "их id в поле refs.\n\nПОЧТА:\n"
+        + json.dumps(idx, ensure_ascii=False)
+        + "\n\nВерни строго JSON: {\"answer\": \"текст ответа\", \"refs\": [\"id\", ...]}"
+    )
+    messages = [{"role": "system", "content": system}]
+    for turn in (history or [])[-6:]:
+        role = "assistant" if turn.get("role") == "assistant" else "user"
+        messages.append({"role": role, "content": str(turn.get("text", ""))[:2000]})
+    messages.append({"role": "user", "content": question[:2000]})
+
+    data, err = ask_model(messages, temperature=0.3, timeout=180.0)
+    if err:
+        return None, err
+    known = {str(e.get("id")) for e in emails}
+    refs = [str(r) for r in (data.get("refs") or []) if str(r) in known][:10]
+    return {"answer": str(data.get("answer", "")).strip(), "refs": refs}, None
+
+
+# Поля, которые реально стоят денег/времени — их и кэшируем по unid.
+# Письмо в Notes иммутабельно: если оно уже разобрано, повторный AI-запрос
+# для него не нужен ни при каком следующем сборе.
+# Сколько писем взято из кэша, а сколько реально ушло в модель — для баннера
+AI_STATS = {"reused": 0, "sent": 0, "auto": 0}
+
+AI_CACHE_FIELDS = ("priority", "kind", "ask", "deadline", "waitingOn", "risk",
+                    "summary", "threadMessages", "suggestedReply", "needsReply")
+
+
+def load_previous_emails():
+    """Последний сохранённый результат сбора — источник кэша AI-разбора."""
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f).get("emails", []) or []
+    except Exception:
+        return []
+
+
+def apply_ai_cache(emails, previous_emails):
+    """Переносит уже посчитанный AI-разбор на письма с тем же unid, чтобы не
+    гонять их через модель повторно. Письмо считается разобранным, если
+    у него в прошлом сборе заполнено «kind» (реальный AI-результат или
+    детерминированный «Информирование» для автоматики — оба варианта
+    одинаково не нуждаются в повторном запросе)."""
+    prev_by_unid = {p.get("unid"): p for p in previous_emails if p.get("unid")}
+    reused = 0
+    for e in emails:
+        prev = prev_by_unid.get(e.get("unid"))
+        if prev and str(prev.get("kind") or "").strip():
+            for field in AI_CACHE_FIELDS:
+                if field in prev:
+                    e[field] = prev[field]
+            e["aiAnalyzed"] = True
+            reused += 1
+    AI_STATS["reused"] = reused
+    if reused:
+        print(f"[i] AI-разбор переиспользован из кэша для {reused} ранее обработанных писем "
+              f"(без повторного запроса к модели)")
+    return emails
+
+
+def refresh_overdue_flags(emails):
+    """Просрочка пересчитывается от текущей даты при каждом сборе, даже
+    для писем, чей разбор пришёл из кэша — дедлайн мог наступить с тех пор."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    for e in emails:
+        dl = str(e.get("deadline") or "").strip()
+        if re.fullmatch(r'\d{4}-\d{2}-\d{2}', dl) and dl < today:
+            e["overdue"] = True
+    return emails
 
 
 def call_ai_triage(emails, skip_system=True):
@@ -921,15 +1619,30 @@ def call_ai_triage(emails, skip_system=True):
     batch_size = cfg.getint("NOTES", "batch_size", fallback=15)
     raw_template = load_prompt_template()
 
-    targets = emails
+    AI_STATS.update(sent=0, auto=0)
+    already = sum(1 for e in emails if e.get("aiAnalyzed"))
+    targets = [e for e in emails if not e.get("aiAnalyzed")]
+    if already:
+        print(f"[i] Пропущено как уже разобранное ранее (кэш по unid): {already} писем")
+
     if skip_system:
-        auto = [e for e in emails
-                if not e.get("senderTag") and is_system_sender(e.get("senderName"), e.get("senderEmail"))]
+        # Мимо модели идёт только то, что не требует действий: отчёты о правах,
+        # дайджесты, автоответы. Согласования от 1С и Ivanti разбираются всегда.
+        # Проверяем только среди ещё не разобранных — кэшированные уже отфильтрованы выше.
+        auto = [e for e in targets
+                if not e.get("senderTag")
+                and not e.get("carriesAction")
+                and is_system_sender(e.get("senderName"), e.get("senderEmail"))]
         for e in auto:
             e["priority"] = 3
-            e["summary"] = e["summary"] or "Автоматическое уведомление — AI-разбор не требуется"
+            e["kind"] = "Информирование"
+            e["waitingOn"] = "none"
+            e["risk"] = "low"
+            e["summary"] = e["summary"] or "Автоматическое уведомление — действий не требует"
             e["threadMessages"] = [{"text": e["summary"]}]
-        targets = [e for e in emails if e not in auto]
+            e["aiAnalyzed"] = True
+        targets = [e for e in targets if e not in auto]
+        AI_STATS["auto"] = len(auto)
         if auto:
             print(f"[i] Пропущено мимо AI как автоматика: {len(auto)} писем "
                   f"(экономия ~{max(0, (len(auto) + batch_size - 1) // batch_size)} запросов)")
@@ -955,6 +1668,7 @@ def call_ai_triage(emails, skip_system=True):
         } for e in batch]
 
         prompt = (raw_template
+            .replace("[[TODAY]]", datetime.now().strftime("%Y-%m-%d (%A)"))
             .replace("[[E_TOP_LIST]]", str(e_top))
             .replace("[[E_DIR_LIST]]", str(e_dir))
             .replace("[[EMAIL_COUNT]]", str(len(batch)))
@@ -1062,10 +1776,40 @@ def call_ai_triage(emails, skip_system=True):
                 if info.get("action_type", "") == "Отвечено":
                     e["isReplied"] = True
 
+                # новые поля разбора
+                kind = str(info.get("kind", "") or "").strip()
+                if kind:
+                    e["kind"] = kind
+                    if kind in ("Согласование", "Поручение", "Вопрос"):
+                        e["needsReply"] = True
+
+                ask = str(info.get("ask", "") or "").strip()
+                if ask and ask.lower() not in ("null", "none", "-"):
+                    e["ask"] = ask
+
+                dl = str(info.get("deadline", "") or "").strip()
+                if re.fullmatch(r'\d{4}-\d{2}-\d{2}', dl):
+                    e["deadline"] = dl
+                    if dl < datetime.now().strftime("%Y-%m-%d"):
+                        e["overdue"] = True
+                if info.get("overdue") is True:
+                    e["overdue"] = True
+
+                wo = str(info.get("waiting_on", "") or "").strip().lower()
+                if wo in ("me", "them", "none"):
+                    e["waitingOn"] = wo
+
+                risk = str(info.get("risk", "") or "").strip().lower()
+                if risk in ("high", "medium", "low"):
+                    e["risk"] = risk
+
+                e["aiAnalyzed"] = True
+
             print(f"[✓] Пакет {batch_idx}/{total_batches} обработан успешно!")
         except Exception as e:
             print(f"[!] AI Triage для пакета {batch_idx}/{total_batches} пропущен из-за ошибки: {e}")
 
+    AI_STATS["sent"] = len(targets)
     print(f"[✓] AI-разбор завершён: обработано {len(targets)} из {len(emails)} писем")
     return emails
 
@@ -1108,6 +1852,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
                     cache = json.load(f)
                 cache["emails"] = apply_work_state(cache.get("emails", []))
+                cache.setdefault("ai_stats", dict(AI_STATS))
                 self.send_json(200, cache)
             except Exception:
                 self.send_json(200, {"emails": []})
@@ -1133,6 +1878,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 subject_block = cfg.get("UI", "subject_block", fallback=DEFAULT_SUBJECT_BLOCK)
                 skip_ai = bool(req_data.get("skip_ai", False))
 
+                AI_STATS.update(reused=0, sent=0, auto=0)
                 emails = fetch_notes_emails(days=days, max_emails=max_emails, max_chars=max_chars,
                                             skip_weekends=skip_weekends, subject_block=subject_block)
                 if emails:
@@ -1153,14 +1899,24 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                     emails = tag_emails_by_persons(cfg, emails)
 
                     if not skip_ai:
+                        # Письмо в Notes неизменяемо: то, что уже разобрано в прошлом
+                        # сборе, повторно к модели не уходит — переносим готовый разбор.
+                        emails = apply_ai_cache(emails, load_previous_emails())
                         emails = call_ai_triage(
                             emails,
                             skip_system=cfg.getboolean("UI", "skip_ai_for_system", fallback=True))
+                        emails = refresh_overdue_flags(emails)
                     else:
                         print("[i] AI-анализ пропущен по запросу (быстрый сбор)")
 
+                digest = None
+                if emails and not skip_ai:
+                    digest, _ = build_digest(emails, days)
+
                 result = {
                     "emails": emails,
+                    "digest": digest,
+                    "ai_stats": dict(AI_STATS),
                     "read_detection": READ_DETECTION,
                     "synced_at": datetime.now().isoformat(timespec="seconds"),
                     "days": days
@@ -1179,12 +1935,50 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
             try:
                 unid = req_data.get("unid", "")
                 is_read = req_data.get("is_read", True)
-                success, actual = set_doc_read_status(unid, is_read)
+                success, actual, how = set_doc_read_status(unid, is_read)
                 self.send_json(200, {
                     "status": "ok" if success else "failed",
                     "is_read": actual if actual is not None else is_read,
-                    "verified": actual is not None
+                    "verified": actual is not None,
+                    "source": how
                 })
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif self.path == "/api/digest":
+            try:
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    cache = json.load(f)
+                emails = apply_work_state(cache.get("emails", []))
+                digest, err = build_digest(emails, cache.get("days", 2))
+                if err:
+                    self.send_json(500, {"error": err})
+                    return
+                cache["digest"] = digest
+                with open(DATA_FILE, "w", encoding="utf-8") as f:
+                    json.dump(cache, f, ensure_ascii=False, indent=2)
+                self.send_json(200, {"status": "ok", "digest": digest})
+            except FileNotFoundError:
+                self.send_json(400, {"error": "почта ещё не собрана"})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif self.path == "/api/ask":
+            try:
+                question = str(req_data.get("question", "")).strip()
+                if not question:
+                    self.send_json(400, {"error": "пустой вопрос"})
+                    return
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    emails = apply_work_state(json.load(f).get("emails", []))
+                print(f"[*] Вопрос к почте: {question[:70]}")
+                res, err = answer_question(emails, question, req_data.get("history"))
+                if err:
+                    self.send_json(500, {"error": err})
+                    return
+                self.send_json(200, res)
+            except FileNotFoundError:
+                self.send_json(400, {"error": "почта ещё не собрана"})
             except Exception as e:
                 self.send_json(500, {"error": str(e)})
 
@@ -1301,6 +2095,9 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                     except Exception as e:
                         self.send_json(500, {"error": f"не удалось удалить кэш писем: {e}"})
                         return
+                if what in ("all", "seen"):
+                    if forget_seen():
+                        removed.append("журнал показанных писем")
                 if what in ("all", "state"):
                     try:
                         if os.path.exists(STATE_FILE):
@@ -1322,6 +2119,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                     return
                 link, err = create_notes_reply(unid, text)
                 if link:
+                    save_draft(unid, text)
                     self.send_json(200, {"status": "ok", "lotus_url": link})
                 else:
                     self.send_json(500, {"error": err or "Ошибка создания ответа в Lotus Notes"})
