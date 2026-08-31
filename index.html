@@ -87,8 +87,8 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
 @keyframes sp { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .spin { animation:none; } * { transition:none !important; } }
 
-/* Одна полоса вместо четырёх карточек: те же очереди уже есть чипами
-   в списке, поэтому наверху нужен счётчик-указатель, а не плитка. */
+/* Одна полоса вместо четырёх карточек: очереди собраны здесь же,
+   в шапке, поэтому чипы в списке больше не нужны. */
 .metrics { display:flex; align-items:center; gap:2px; margin:0 18px 8px; padding:3px;
            background:var(--surface); border:1px solid var(--line);
            border-radius:var(--radius); flex-wrap:wrap; }
@@ -105,6 +105,7 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
 .metric.m-wip  .n { color:var(--violet); }
 .metric.m-done .n { color:var(--ok); }
 .metric.m-later .n { color:var(--text-2); }
+.metric.m-all  .n { color:var(--text-3); }
 .metric.m-unread .n { color:var(--accent); }
 .m-split { width:1px; align-self:stretch; background:var(--line-soft); margin:3px 5px; flex:0 0 1px; }
 
@@ -462,7 +463,10 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
       <div class="n" id="mWip">—</div><div class="l">В работе</div>
     </button>
     <button class="metric m-done" aria-pressed="false" onclick="setQueue('done')">
-      <div class="n" id="mDone">—</div><div class="l">Закрыто сегодня</div>
+      <div class="n" id="mDone">—</div><div class="l">Отработано</div>
+    </button>
+    <button class="metric m-all" aria-pressed="false" onclick="setQueue('all')">
+      <div class="n" id="mAll">—</div><div class="l">Все</div>
     </button>
     <div class="m-split"></div>
     <button class="metric m-unread" aria-pressed="false" onclick="toggleUnreadFilter()" title="Показать только непрочитанные">
@@ -504,14 +508,6 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         <option value="date">Сначала новые</option>
         <option value="sender">По отправителю</option>
       </select>
-    </div>
-
-    <div class="queues">
-      <button class="chip" aria-pressed="true"  onclick="setQueue('now')"   id="q-now">Сейчас <span class="cnt" id="c-now"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setQueue('later')" id="q-later">Потом <span class="cnt" id="c-later"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setQueue('wip')"   id="q-wip">В работе <span class="cnt" id="c-wip"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setQueue('done')"  id="q-done">Отработано <span class="cnt" id="c-done"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setQueue('all')"   id="q-all">Все <span class="cnt" id="c-all"></span></button>
     </div>
 
     <div class="presets">
@@ -1277,9 +1273,6 @@ function toggleUnreadFilter() {
 
 function setQueue(qq) {
   queue = qq;
-  ['now','later','wip','done','all'].forEach(k => {
-    const c = $('q-' + k); if (c) c.setAttribute('aria-pressed', String(k === qq));
-  });
   document.querySelectorAll('.metric').forEach(m => {
     const mm = m.getAttribute('onclick').match(/'(\w+)'/);
     if (mm) m.setAttribute('aria-pressed', String(mm[1] === qq));
@@ -1324,15 +1317,12 @@ function render() {
   const nLater = emails.filter(isLater).length;
   const nWip = emails.filter(isWip).length;
   const nDone = emails.filter(isDone).length;
-  const nDoneToday = emails.filter(e => isDone(e) && isToday(e.stateAt)).length;
 
   $('mNow').textContent = nNow;
   $('mLater').textContent = nLater;
   $('mWip').textContent = nWip;
-  $('mDone').textContent = nDoneToday;
-  $('c-now').textContent = nNow;   $('c-later').textContent = nLater;
-  $('c-wip').textContent = nWip;   $('c-done').textContent = nDone;
-  $('c-all').textContent = emails.length;
+  $('mDone').textContent = nDone;
+  $('mAll').textContent = emails.length;
   /* Счётчики пресетов считаются в рамках активной очереди: «в «Сейчас» 3 требуют ответа». */
   const presetN = p => emails.filter(e => inQueue(e, queue) && inPreset(e, p)).length;
   $('c-p-any').textContent   = presetN('any');

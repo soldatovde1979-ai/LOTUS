@@ -193,8 +193,8 @@
       "threadKey": "задача просрочена на 7 дней: исполнить служебная записка на установление доплаты за совмещение профессий (должностей), упрощенная заместитель генерального директора по информацио",
       "threadSize": 1,
       "threadLatest": true,
-      "workState": "new",
-      "stateAt": "",
+      "workState": "done",
+      "stateAt": "2026-08-31T19:25:42",
       "suggestedReply": "Добрый день! Приношу извинения за задержку, исполняю сегодня.",
       "aiAnalyzed": true
     },
@@ -2312,8 +2312,8 @@
       "threadKey": "auto: отпуск (возврат 01.09.2026)",
       "threadSize": 1,
       "threadLatest": true,
-      "workState": "new",
-      "stateAt": "",
+      "workState": "done",
+      "stateAt": "2026-08-31T19:25:07",
       "senderTag": "E_TOP",
       "aiAnalyzed": true
     },
@@ -5834,8 +5834,8 @@
       "threadKey": "мои задачи",
       "threadSize": 4,
       "threadLatest": true,
-      "workState": "new",
-      "stateAt": "",
+      "workState": "done",
+      "stateAt": "2026-08-31T19:29:20",
       "suggestedReply": "Добрый день! Работу организую, срок подтверждаю.",
       "aiAnalyzed": true
     },
@@ -6108,8 +6108,8 @@
       "threadKey": "согласование протокола. орган управления: 09. хэндлинг\\10. комитет по ит. от даты: 26.08.2026",
       "threadSize": 1,
       "threadLatest": true,
-      "workState": "new",
-      "stateAt": "",
+      "workState": "done",
+      "stateAt": "2026-08-31T19:28:59",
       "suggestedReply": "Добрый день! Протокол согласован.",
       "aiAnalyzed": true
     },
@@ -6468,8 +6468,8 @@
       "threadKey": "оповещение 1с:ух: требуется согласование <приобретение товаров и услуг 00er-005352 от 26.08.2026 11:28:18>",
       "threadSize": 1,
       "threadLatest": true,
-      "workState": "new",
-      "stateAt": "",
+      "workState": "done",
+      "stateAt": "2026-08-31T19:28:57",
       "suggestedReply": "Добрый день! Согласовано.",
       "aiAnalyzed": true
     },
@@ -6483,7 +6483,7 @@
       "senderName": "Natalya A Popova",
       "senderEmail": "na.popova@svo.su",
       "subject": ">>: HA: СППР 00-00034157_ШХ Изменение карточки:ЕРП: в ПТУ   № 5333  копейки не идут в НДС",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6523,7 +6523,7 @@
       "senderName": "Galiya A Baybulatova",
       "senderEmail": "ga.baybulatova@svo.su",
       "subject": ">>: Подписание Распоряжения",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6563,7 +6563,7 @@
       "senderName": "1С:Документооборот",
       "senderEmail": "techsupport.dtsup@svo.aero",
       "subject": "Новая задача \"Рассмотреть \"О направлении коммерческого предложения (№ 43-08 от 28.08.2026) (Письмо )\" от 31.08.2026 10:25:32\"",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6588,9 +6588,8 @@
       "threadKey": "новая задача рассмотреть о направлении коммерческого предложения (№ 43-08 от 28.08.2026) (письмо ) от 31.08.2026 10:25:32",
       "threadSize": 1,
       "threadLatest": true,
-      "workState": "new",
-      "stateAt": "",
-      "senderTag": "E_TOP",
+      "workState": "wip",
+      "stateAt": "2026-08-31T19:25:02",
       "suggestedReply": "Принято к рассмотрению.",
       "aiAnalyzed": true
     },
@@ -6604,7 +6603,7 @@
       "senderName": "Zakhar V Koshelev",
       "senderEmail": "zv.koshelev@svo.su",
       "subject": "Перенесено: Матрица доступов в ИС (1 Сен 13:00 ZE3)",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -6644,7 +6643,7 @@
       "senderName": "Zakhar V Koshelev",
       "senderEmail": "zv.koshelev@svo.su",
       "subject": "Перенесено: Согласование сборки релиза ERP (2 Сен 17:00 ZE3)",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -6684,7 +6683,7 @@
       "senderName": "Zakhar V Koshelev",
       "senderEmail": "zv.koshelev@svo.su",
       "subject": "HA: Об актуализации плана-графика развития ИТ (Правление 01.09.2026)",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -6723,7 +6722,7 @@
       "senderName": "Galiya A Baybulatova",
       "senderEmail": "ga.baybulatova@svo.su",
       "subject": ">>: Подписание Распоряжения",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -6763,7 +6762,7 @@
       "senderName": "Natalya A Popova",
       "senderEmail": "na.popova@svo.su",
       "subject": ">>: HA: СППР 00-00034174_ШХ Изменение карточки:ЕРП: заменить технический договор в пту 00ER-003601",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6803,7 +6802,7 @@
       "senderName": "Galiya A Baybulatova",
       "senderEmail": "ga.baybulatova@svo.su",
       "subject": "КИТ ШХ",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6843,7 +6842,7 @@
       "senderName": "Федин Сергей Александрович",
       "senderEmail": "fedin@skbkontur.ru",
       "subject": "Информационная безопасность от Контура ",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6883,7 +6882,7 @@
       "senderName": "Nikolay S Kravchenko",
       "senderEmail": "ns.kravchenko@svo.su",
       "subject": "Согласование на изменение данных в системе по задачам СППР 00-00034201 Проблема 1С \"АРМ Комплектовки\" убрать рацию",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -6923,7 +6922,7 @@
       "senderName": "1С:ИТС. Служба новостей",
       "senderEmail": "news-its@1c.ru",
       "subject": "Может ли суд взыскать зарплату, ориентируясь на среднюю по отрасли в регионе?",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -6962,7 +6961,7 @@
       "senderName": "Шереметьево Хэндлинг",
       "senderEmail": "handling-svo@proton.me",
       "subject": "Внутренняя распродажа имущества по остаточной стоимости",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7001,7 +7000,7 @@
       "senderName": "Svetlana V Protsko",
       "senderEmail": "sv.protsko@svo.su",
       "subject": ">>: 1С:ПРЕДПРИЯТИЕ 8.3",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7040,7 +7039,7 @@
       "senderName": "1С:Документооборот",
       "senderEmail": "techsupport.dtsup@svo.aero",
       "subject": "Действующие доверенности по уволенным сотрудникам от 31.08.2026",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7079,7 +7078,7 @@
       "senderName": "1С:Документооборот",
       "senderEmail": "techsupport.dtsup@svo.aero",
       "subject": "Новые задачи (2)",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7118,7 +7117,7 @@
       "senderName": "Zakhar V Koshelev",
       "senderEmail": "zv.koshelev@svo.su",
       "subject": "Перенесено: Аудит ТЗ (1 Сен 16:00 ZE3)",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7158,7 +7157,7 @@
       "senderName": "Natalia Choporova",
       "senderEmail": "nc@qooqa.org",
       "subject": "Re: обсудить возможность интеграции Qooqa и estaff",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -7198,7 +7197,7 @@
       "senderName": "Regina V Saveleva",
       "senderEmail": "rv.saveleva@svo.su",
       "subject": "Актуализация ИПР: промежуточные итоги ",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": true,
@@ -7238,7 +7237,7 @@
       "senderName": "1С:ЗУП",
       "senderEmail": "techsupport.dtsup@svo.aero",
       "subject": "Пользователи с полными правами (ЗУП) от 31.08.2026",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7277,7 +7276,7 @@
       "senderName": "1С:ERP УХ ООО  Шереметьево Хэндлинг",
       "senderEmail": "techsupport.dtsup@svo.aero",
       "subject": "Пользователи с полными правами (ERP УХ) от 31.08.2026",
-      "isRead": false,
+      "isRead": true,
       "readKnown": false,
       "isReplied": false,
       "needsReply": false,
@@ -7308,74 +7307,74 @@
     }
   ],
   "digest": {
-    "brief": "Сегодня критично: просрочена служебная записка о доплате за совмещение (срок был 17.08, напоминания приходят ежедневно), просрочено согласование заявки на оплату 12 800 руб. (срок 28.08), а также требуется рассмотреть коммерческое предложение №43-08 до 01.09. Также до 01.09 нужно согласовать протокол Комитета по ИТ и технологическую карту, подписать распоряжение (напоминает Байбулатова), а до 02.09 организовать ресурс для хранения ЛНД. Тимонина и Волжин ждут ускорения по проблеме HRlink, Еремин — ответа по техпаспортам.",
+    "brief": "Сегодня критично: просрочены задачи по служебной записке о доплате (срок был 17.08), согласованию договора на поставку телевизоров (27.08), подписанию исходящего письма №28-08 (28.08) и заявке на оплату *7713 (28.08). Также до 01.09 необходимо согласовать протокол Комитета по ИТ (Байбулатова, иначе автоголосование) и рассмотреть коммерческое предложение №43-08 (Столяров). Тимонина и Волжин ждут ускорения по проблеме HRlink с МАШ. До 02.09 нужно организовать ресурс для хранения ЛНД и рассчитать премию за август (Тарасова).",
     "watchlist": [
       {
-        "id": "5",
-        "why": "Просрочка 14 дней, поручение руководства, риск high",
+        "id": "77",
+        "why": "Просрочена на 14 дней, поручение по доплате, риск high",
         "urgency": "today"
       },
       {
-        "id": "166",
-        "why": "Новое поручение E_TOP, срок 01.09, риск high",
+        "id": "81",
+        "why": "Просрочено согласование договора поставки, риск high",
+        "urgency": "today"
+      },
+      {
+        "id": "96",
+        "why": "Просрочено подписание исходящего письма, риск high",
+        "urgency": "today"
+      },
+      {
+        "id": "108",
+        "why": "Просрочена заявка на оплату, риск high",
         "urgency": "today"
       },
       {
         "id": "90",
-        "why": "Согласование протокола КИТ, срок 01.09, риск high",
+        "why": "Согласование протокола КИТ до 01.09, иначе автоголосование",
         "urgency": "today"
       },
       {
-        "id": "116",
-        "why": "Согласование технологической карты, срок 01.09, риск high",
-        "urgency": "today"
-      },
-      {
-        "id": "115",
-        "why": "Подписание распоряжения, напоминание, риск high",
-        "urgency": "today"
-      },
-      {
-        "id": "130",
-        "why": "Организовать ресурс для ЛНД, срок 02.09, риск high",
-        "urgency": "week"
-      },
-      {
-        "id": "108",
-        "why": "Просроченная заявка на оплату, риск high",
+        "id": "166",
+        "why": "Рассмотреть коммерческое предложение до 01.09, риск high",
         "urgency": "today"
       },
       {
         "id": "53",
-        "why": "Поручение E_DIR, проблема HRlink, риск high",
+        "why": "Тимонина ждет ускорения по HRlink, риск high",
+        "urgency": "today"
+      },
+      {
+        "id": "130",
+        "why": "Организовать ресурс для ЛНД до 02.09, риск high",
         "urgency": "week"
       }
     ],
     "themes": [
       {
-        "theme": "Просроченные задачи и поручения",
+        "theme": "Просроченные задачи и согласования",
         "count": 12,
-        "note": "Многократные напоминания по служебной записке, заявкам на оплату, подписанию писем"
+        "note": "Множество задач в 1С:ДО и 1С:УХ просрочены, требуют немедленного исполнения"
       },
       {
-        "theme": "Согласование документов и протоколов",
-        "count": 15,
-        "note": "Протоколы КИТ, технологические карты, договоры, распоряжения"
+        "theme": "Согласование протоколов и распоряжений",
+        "count": 8,
+        "note": "Протоколы Комитета по ИТ, распоряжения, технологические карты - сроки до 01-02.09"
       },
       {
         "theme": "Интеграции и доработки 1С",
         "count": 10,
-        "note": "Загрузка лимитов БДДС, согласование ФТ, сборки релизов"
+        "note": "Обсуждение загрузки лимитов БДДС, интеграции Qooqa/estaff, доработки конфигураций"
       },
       {
-        "theme": "Встречи и совещания",
-        "count": 20,
-        "note": "Планерки 1С, аудиты ТЗ, отчеты по планшетам, интеграции"
+        "theme": "Электронный путевой лист (ЭПЛ)",
+        "count": 6,
+        "note": "Подготовка к совещанию, расчеты затрат, сравнительный анализ поставщиков"
       },
       {
-        "theme": "Информационные уведомления",
-        "count": 30,
-        "note": "Автоматические отчеты, дайджесты, автоответы"
+        "theme": "Автоматические уведомления",
+        "count": 40,
+        "note": "Большой объем информационных писем от 1С, не требующих действий"
       }
     ],
     "people": [
@@ -7388,36 +7387,36 @@
         "note": "Просит ускорить взаимодействие с МАШ по проблеме HRlink"
       },
       {
-        "name": "Волжин Олег П.",
-        "note": "Требует поторопить МАШ по проблеме HRlink"
+        "name": "Байбулатова Галия А.",
+        "note": "Напоминает о согласовании протокола КИТ и подписании распоряжения"
+      },
+      {
+        "name": "Рыльских Наталья Николаевна",
+        "note": "Просит переподписать документ ЕП Контур после корректировки суммы"
       },
       {
         "name": "Еремин Константин Иванович",
-        "note": "Ждет ответа на комментарии по техпаспортам ИС"
-      },
-      {
-        "name": "Байбулатова Галия А.",
-        "note": "Напоминает о подписании распоряжения и согласовании техкарты"
+        "note": "Ждет ответа на замечания по техпаспортам ИС"
       }
     ],
-    "built_at": "2026-08-31T19:06:56"
+    "built_at": "2026-08-31T19:30:56"
   },
   "ai_stats": {
-    "reused": 163,
-    "sent": 16,
-    "auto": 5
+    "reused": 184,
+    "sent": 0,
+    "auto": 0
   },
   "read_detection": {
     "method": "новое с прошлого сбора",
     "reliable": true,
     "detail": "Notes не отдаёт метки прочтения (эти функции появились в Domino Objects 8.0). Новыми считаются письма, которых не было в прошлом сборе.",
     "candidates": {},
-    "unread": 21,
+    "unread": 0,
     "total": 184,
     "skipped_by_limit": 0,
     "skipped_by_subject": 37,
     "found_total": 221
   },
-  "synced_at": "2026-08-31T18:53:14",
+  "synced_at": "2026-08-31T19:30:56",
   "days": 3
 }
