@@ -867,7 +867,8 @@ def merge_duplicate_subjects(emails):
     """Объединяет письма с одинаковой темой от одного отправителя
     (обычно это автоматические напоминания/уведомления). Из группы оставляет
     последнее письмо, а в его тело добавляет блок «когда приходили» остальных.
-    Возвращает (новый список, сколько писем убрано)."""
+    Возвращает (новый список, сколько писем убрано, dict unid->момент свёрнутых
+    писем, которые следует автоматически пометить отработанными)."""
     groups = {}
     order = []
     out = []
@@ -886,6 +887,7 @@ def merge_duplicate_subjects(emails):
         groups[key].append(e)
 
     removed = 0
+    superseded = {}
     for key in order:
         items = groups[key]
         if len(items) < 2:
@@ -910,10 +912,37 @@ def merge_duplicate_subjects(emails):
         keep["body"] = (keep.get("body") or "").rstrip() + block
         out.append(keep)
         removed += len(items) - 1
+        # Старые письма группы считаются исполненными автоматически:
+        # их вытеснило последнее напоминание, активным остаётся только оно.
+        for it in items[1:]:
+            u = it.get("unid", "")
+            if u:
+                superseded[u] = it.get("dateIso") or ""
     if removed:
         print(f"[+] Объединено писем с одинаковой темой: {removed} "
               f"(оставлено последнее от каждого отправителя)")
-    return out, removed
+    return out, removed, superseded
+
+
+def auto_mark_done(records):
+    """Автоматически помечает свёрнутые при объединении письма как «Отработано».
+    records: {unid: iso-момент}. Существующая метка done не перетирается.
+    Возвращает, сколько записей добавлено/изменено."""
+    records = {u: w for u, w in (records or {}).items() if u}
+    if not records:
+        return 0
+    st = load_work_state()
+    changed = 0
+    for unid, when in records.items():
+        rec = st.get(unid, {})
+        if rec.get("status") != "done":
+            rec["status"] = "done"
+            rec["updated"] = when or datetime.now().isoformat(timespec="seconds")
+            st[unid] = rec
+            changed += 1
+    if changed:
+        save_work_state(st)
+    return changed
 
 
 # ============================================================================
@@ -1409,8 +1438,11 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
     # Письма с одинаковой темой от одного отправителя (обычно автописьма и
     # напоминания) свёртываем в одно — последнее, а в теле перечисляем,
     # когда приходили остальные.
-    emails, merged_n = merge_duplicate_subjects(emails)
+    emails, merged_n, superseded = merge_duplicate_subjects(emails)
     if merged_n:
+        auto_done = auto_mark_done(superseded)
+        if auto_done:
+            print(f"[+] Свёрнутых писем отмечено отработанными автоматически: {auto_done}")
         unread_count = sum(1 for e in emails if not e.get("isRead"))
         READ_DETECTION["unread"] = unread_count
         READ_DETECTION["total"] = len(emails)
