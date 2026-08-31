@@ -863,6 +863,59 @@ def group_threads(emails):
     return emails
 
 
+def merge_duplicate_subjects(emails):
+    """Объединяет письма с одинаковой темой от одного отправителя
+    (обычно это автоматические напоминания/уведомления). Из группы оставляет
+    последнее письмо, а в его тело добавляет блок «когда приходили» остальных.
+    Возвращает (новый список, сколько писем убрано)."""
+    groups = {}
+    order = []
+    out = []
+    for e in emails:
+        s = str(e.get("subject") or "").strip()
+        s = re.sub(r'\s+', ' ', s).lower()
+        sender = str(e.get("senderEmail") or "").strip().lower()
+        # Пустые и почти пустые темы не объединяем — это разные письма
+        if len(s) < 3:
+            out.append(e)
+            continue
+        key = (s, sender)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(e)
+
+    removed = 0
+    for key in order:
+        items = groups[key]
+        if len(items) < 2:
+            out.extend(items)
+            continue
+        items.sort(key=lambda x: x.get("dateIso") or "", reverse=True)
+        keep = items[0]
+        times = []
+        for it in items:
+            stamp = it.get("date") or (it.get("dateIso") or "")[:16]
+            if stamp:
+                times.append(stamp)
+        keep["merged"] = True
+        keep["mergedCount"] = len(items)
+        keep["mergedTimes"] = times
+        block = (
+            "\n\n════════════════════════════════════\n"
+            f"Объединено {len(items)} писем с этой темой (показано последнее).\n"
+            "Письма приходили: " + ", ".join(times) + "\n"
+            "════════════════════════════════════"
+        )
+        keep["body"] = (keep.get("body") or "").rstrip() + block
+        out.append(keep)
+        removed += len(items) - 1
+    if removed:
+        print(f"[+] Объединено писем с одинаковой темой: {removed} "
+              f"(оставлено последнее от каждого отправителя)")
+    return out, removed
+
+
 # ============================================================================
 #  ВАШИ ОТВЕТЫ
 #  Отметка «Отвечено» бралась из флага Notes и ничего не показывала.
@@ -1352,6 +1405,16 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
     READ_DETECTION["skipped_by_limit"] = skipped_by_limit
     READ_DETECTION["skipped_by_subject"] = skipped_by_subject
     READ_DETECTION["found_total"] = count
+
+    # Письма с одинаковой темой от одного отправителя (обычно автописьма и
+    # напоминания) свёртываем в одно — последнее, а в теле перечисляем,
+    # когда приходили остальные.
+    emails, merged_n = merge_duplicate_subjects(emails)
+    if merged_n:
+        unread_count = sum(1 for e in emails if not e.get("isRead"))
+        READ_DETECTION["unread"] = unread_count
+        READ_DETECTION["total"] = len(emails)
+
     emails = group_threads(emails)
     try:
         emails = attach_replies(db, emails, start_date)

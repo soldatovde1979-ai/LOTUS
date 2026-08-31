@@ -1415,6 +1415,7 @@ function render() {
         <div class="row1">
           <span class="who">${esc(e.senderName)}</span>
           ${e.threadSize > 1 ? `<span class="thread-badge">${e.threadSize} в ветке</span>` : ''}
+          ${e.mergedCount > 1 ? `<span class="thread-badge" title="Показано последнее, остальные свёрнуты">${e.mergedCount} напоминаний</span>` : ''}
           <span class="when">${shortTime(e)}</span>
         </div>
         <div class="subj">${esc(e.subject)}</div>
