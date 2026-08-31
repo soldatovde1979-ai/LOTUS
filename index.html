@@ -123,9 +123,17 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
 .notice .n-sub { color:var(--text-3); }
 
 .work { flex:1; min-height:0; display:grid;
-        grid-template-columns:minmax(340px,470px) 1fr; gap:12px; padding:0 18px 14px; }
+        grid-template-columns:minmax(300px, var(--listW, 470px)) 7px minmax(340px, 1fr);
+        gap:0; padding:0 18px 14px; }
 .panel { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
          display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+/* Вертикальный ползунок между списком и чтением. Тонкая линия-накладка поверх
+   прозрачной полосы захвата: вся полоса реагирует на курсор, а видна только линия. */
+.resizer { cursor:col-resize; position:relative; touch-action:none; }
+.resizer::after { content:""; position:absolute; top:8px; bottom:8px; left:50%; width:3px;
+                  transform:translateX(-50%); background:var(--line-soft); border-radius:3px;
+                  transition:background .12s, width .12s; }
+.resizer:hover::after, .resizer.active::after { background:var(--accent); width:5px; }
 /* Цифры и время — как на табло вылетов: моноширинные, выровненные по разрядам */
 .mono-num { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
 
@@ -155,6 +163,12 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
                border-radius:var(--radius-sm); padding:5px 8px; font-size:11.5px;
                font-weight:600; cursor:pointer; }
 .count { font-size:11.5px; color:var(--text-3); margin-left:auto; white-space:nowrap; }
+
+/* Пресеты «Фокус» — производные представления поверх очередей. Все взаимоисключающие,
+   комбинируются с очередью, отправителем, типом и поиском (логика И). */
+.presets { display:flex; gap:6px; padding:0 11px 9px; flex-wrap:wrap; align-items:center; }
+.presets .plabel { font-size:11px; color:var(--text-3); font-weight:600; letter-spacing:.03em; }
+.presets .chip[aria-pressed="true"] { background:var(--violet); border-color:var(--violet); }
 
 .list { overflow-y:auto; flex:1; }
 .group { position:sticky; top:0; z-index:2; padding:6px 13px 6px 11px; font-size:10.5px;
@@ -403,6 +417,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
   body { overflow:auto; }
   .work { grid-template-columns:1fr; height:auto; }
   .list { max-height:55vh; }
+  .resizer { display:none; }
 }
 </style>
 </head>
@@ -499,6 +514,17 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
       <button class="chip" aria-pressed="false" onclick="setQueue('all')"   id="q-all">Все <span class="cnt" id="c-all"></span></button>
     </div>
 
+    <div class="presets">
+      <span class="plabel">Фокус</span>
+      <button class="chip" aria-pressed="true"  onclick="setPreset('any')"   id="p-any">Все <span class="cnt" id="c-p-any"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('reply')" id="p-reply">Требуют ответа <span class="cnt" id="c-p-reply"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('p1')"    id="p-p1">Срочно P1 <span class="cnt" id="c-p-p1"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('imp')"   id="p-imp">Важное P1–P2 <span class="cnt" id="c-p-imp"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('over')"  id="p-over">Просрочено <span class="cnt" id="c-p-over"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('top')"   id="p-top">Руководство <span class="cnt" id="c-p-top"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('them')"  id="p-them">Ждём других <span class="cnt" id="c-p-them"></span></button>
+    </div>
+
     <div class="axis">
       <label for="whoSel">От кого</label>
       <select id="whoSel" onchange="render()">
@@ -509,12 +535,23 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         <option value="people">только люди</option>
         <option value="sys">только системы</option>
       </select>
+      <label for="kindSel">Тип</label>
+      <select id="kindSel" onchange="render()">
+        <option value="any">любой тип</option>
+        <option value="Согласование">согласование</option>
+        <option value="Поручение">поручение</option>
+        <option value="Вопрос">вопрос</option>
+        <option value="Встреча">встреча</option>
+        <option value="Информирование">информирование</option>
+      </select>
       <button class="btn sm" onclick="doneAllVisible()" title="Отметить отработанными все письма в текущем списке">✓ Всё</button>
       <span class="count" id="count"></span>
     </div>
 
     <div class="list" id="list"></div>
   </section>
+
+  <div class="resizer" id="resizer" role="separator" aria-orientation="vertical" title="Изменить ширину списка"></div>
 
   <section class="panel">
     <div class="pane-tabs">
@@ -692,6 +729,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
 
 let emails = [], topNames = [], dirNames = [], topMails = [], dirMails = [];
 let queue = 'now', selectedKey = null, busy = false, replyKey = null;
+let preset = 'any';
 let readDetection = null, markReadOnDone = true, cfg = {}, onlyUnread = false;
 let aiStats = null;
 let digest = null, pane = 'mail', chatHistory = [], chatBusy = false;
@@ -795,6 +833,18 @@ const isWip  = e => state(e) === 'wip';
 const isNow  = e => !isDone(e) && !isWip(e) && (e.priority === 1 || isTop(e) || waiting(e));
 const isLater= e => !isDone(e) && !isWip(e) && !isNow(e);
 
+/* Пресеты «Фокус» — производные представления поверх очередей. Один активный
+   пресет сочетается с очередью, отправителем, типом и поиском (логика И). */
+function inPreset(e, p) {
+  if (p === 'reply') return waiting(e) && !isDone(e);
+  if (p === 'p1')    return e.priority === 1;
+  if (p === 'imp')   return (e.priority === 1 || e.priority === 2);
+  if (p === 'over')  return !!e.overdue;
+  if (p === 'top')   return isTop(e);
+  if (p === 'them')  return e.waitingOn === 'them';
+  return true;
+}
+
 function inQueue(e, qq) {
   if (qq === 'now')   return isNow(e);
   if (qq === 'later') return isLater(e);
@@ -810,6 +860,11 @@ function matchWho(e) {
   if (who === 'people') return !isSystem(e);
   if (who === 'sys')    return isSystem(e);
   return true;
+}
+function matchKind(e) {
+  const k = $('kindSel').value;
+  if (k === 'any') return true;
+  return (e.kind || '') === k;
 }
 
 /* ═══════════════ ЗАГРУЗКА ═══════════════ */
@@ -1232,11 +1287,21 @@ function setQueue(qq) {
   render();
 }
 
+function setPreset(p) {
+  preset = p;
+  ['any','reply','p1','imp','over','top','them'].forEach(k => {
+    const c = $('p-' + k); if (c) c.setAttribute('aria-pressed', String(k === p));
+  });
+  render();
+}
+
 function visible() {
   const q = $('q').value.trim().toLowerCase();
   let out = emails.filter(e => {
     if (!inQueue(e, queue)) return false;
+    if (!inPreset(e, preset)) return false;
     if (!matchWho(e)) return false;
+    if (!matchKind(e)) return false;
     if (onlyUnread && e.isRead) return false;
     if (q) return (e.subject + ' ' + e.senderName + ' ' + (e.senderEmail||'') + ' ' + gist(e)).toLowerCase().includes(q);
     return true;
@@ -1268,6 +1333,15 @@ function render() {
   $('c-now').textContent = nNow;   $('c-later').textContent = nLater;
   $('c-wip').textContent = nWip;   $('c-done').textContent = nDone;
   $('c-all').textContent = emails.length;
+  /* Счётчики пресетов считаются в рамках активной очереди: «в «Сейчас» 3 требуют ответа». */
+  const presetN = p => emails.filter(e => inQueue(e, queue) && inPreset(e, p)).length;
+  $('c-p-any').textContent   = presetN('any');
+  $('c-p-reply').textContent = presetN('reply');
+  $('c-p-p1').textContent    = presetN('p1');
+  $('c-p-imp').textContent   = presetN('imp');
+  $('c-p-over').textContent  = presetN('over');
+  $('c-p-top').textContent   = presetN('top');
+  $('c-p-them').textContent  = presetN('them');
   const nUnread = emails.filter(e => !e.isRead).length;
   $('mUnread').textContent = nUnread;
   $('mUnreadLabel').textContent = bySync() ? 'Новых с прошлого сбора' : 'Непрочитанные';
@@ -1713,6 +1787,45 @@ document.addEventListener('keydown', ev => {
 document.querySelectorAll('.overlay').forEach(o => {
   o.addEventListener('click', ev => { if (ev.target === o) { o.classList.remove('show'); dropFocus(); } });
 });
+
+/* ═══════════════ ШИРИНА СПИСКА ═══════════════ */
+/* Вертикальный ползунок между списком и чтением. Ширина запоминается в localStorage
+   и восстанавливается при загрузке. Минимум 300px, максимум 900px. */
+function initResizer() {
+  const rz = $('resizer'), work = document.querySelector('.work');
+  let startX = 0, startW = 0;
+  const clamp = w => Math.max(300, Math.min(900, w));
+  const apply = w => {
+    const v = clamp(w);
+    work.style.setProperty('--listW', v + 'px');
+    try { localStorage.setItem('smd-list-w', String(v)); } catch (e) {}
+  };
+  try {
+    const s = localStorage.getItem('smd-list-w');
+    if (s) work.style.setProperty('--listW', clamp(+s) + 'px');
+  } catch (e) {}
+  rz.addEventListener('pointerdown', ev => {
+    ev.preventDefault();
+    startX = ev.clientX;
+    startW = document.querySelector('.work .panel').getBoundingClientRect().width;
+    rz.setPointerCapture(ev.pointerId);
+    rz.classList.add('active');
+    document.body.style.userSelect = 'none';
+  });
+  rz.addEventListener('pointermove', ev => {
+    if (!rz.classList.contains('active')) return;
+    apply(startW + (ev.clientX - startX));
+  });
+  const stop = ev => {
+    if (!rz.classList.contains('active')) return;
+    rz.classList.remove('active');
+    document.body.style.userSelect = '';
+    if (ev && ev.pointerId !== undefined) { try { rz.releasePointerCapture(ev.pointerId); } catch (e) {} }
+  };
+  rz.addEventListener('pointerup', stop);
+  rz.addEventListener('pointercancel', stop);
+}
+initResizer();
 
 init();
 </script>
