@@ -2138,10 +2138,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    import sys
     PORT = 8765
-    if len(sys.argv) > 1 and sys.argv[1].lstrip('-').isdigit():
-        PORT = int(sys.argv[1])
     server = HTTPServer(("127.0.0.1", PORT), NotesWebHandler)
     print(f"[*] Smart Mail Dashboard запущен: http://127.0.0.1:{PORT}")
     try:

@@ -341,18 +341,6 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
                  overflow:hidden; text-overflow:ellipsis; }
 .brief-meta li b { color:var(--text); font-weight:650; }
 
-/* ── Сворачивание сводки ──
-   Заголовок и кнопка остаются, содержимое уходит; блок .work ниже растёт. */
-.brief-toggle { flex-shrink:0; padding:3px 8px; font-size:11px; line-height:1;
-                color:var(--text-3); transition:transform .18s ease, color .12s; }
-.brief-toggle:hover { color:var(--text); }
-.brief.collapsed { padding-top:6px; padding-bottom:6px; }
-.brief.collapsed .brief-head { margin-bottom:0; }
-.brief.collapsed .brief-text,
-.brief.collapsed .watch,
-.brief.collapsed .brief-meta { display:none; }
-.brief.collapsed .brief-toggle { transform:rotate(-90deg); }
-
 /* ── Переключатель правой панели ── */
 .pane-tabs { display:flex; gap:4px; padding:8px 10px; border-bottom:1px solid var(--line-soft); }
 .pane-tab { border:none; background:transparent; color:var(--text-2); font-size:12.5px;
@@ -464,8 +452,6 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
 
   <section class="brief" id="brief">
     <div class="brief-head">
-      <button class="btn sm ghost brief-toggle" id="briefToggle" onclick="toggleBrief()"
-              title="Свернуть сводку" aria-expanded="true">▾</button>
       <span class="spark">✦</span>
       <h3>Сводка по почте</h3>
       <span class="when" id="briefWhen"></span>
@@ -1082,18 +1068,6 @@ function renderDigest() {
       `</ul></div>`);
   }
   meta.innerHTML = cols.join('');
-}
-
-/* Сворачивание/разворачивание сводки. Состояние не сохраняется —
-   после перезагрузки страницы блок всегда развёрнут. */
-function toggleBrief() {
-  const b = $('brief');
-  const collapsed = b.classList.toggle('collapsed');
-  const t = $('briefToggle');
-  if (t) {
-    t.setAttribute('aria-expanded', String(!collapsed));
-    t.title = collapsed ? 'Развернуть сводку' : 'Свернуть сводку';
-  }
 }
 
 async function rebuildDigest() {
