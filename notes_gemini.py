@@ -509,6 +509,33 @@ def set_work_state(unid, status, draft=None):
     return save_work_state(st), None
 
 
+def set_work_states(unids, status, draft=None):
+    """Пакетная отметка состояния для цепочки писем.
+
+    Помечается первый элемент цепочки — статус получают ВСЕ письма ветки,
+    поэтому сюда передаётся их список. Вложенное письмо, помеченное отдельно,
+    передаёт в этом списке только само себя."""
+    unids = [u for u in (unids or []) if u]
+    if not unids:
+        return False, "нет писем для отметки"
+    if status not in VALID_STATES:
+        return False, f"недопустимое состояние: {status}"
+    st = load_work_state()
+    now = datetime.now().isoformat(timespec="seconds")
+    if status == "new":
+        for unid in unids:
+            st.pop(unid, None)
+    else:
+        for unid in unids:
+            rec = st.get(unid, {})
+            rec["status"] = status
+            rec["updated"] = now
+            if draft:
+                rec["draft"] = {"text": str(draft)[:4000], "at": now}
+            st[unid] = rec
+    return save_work_state(st), None
+
+
 def save_draft(unid, text):
     """Запоминает созданный через дашборд черновик, чтобы было видно,
     что именно вы написали, пока письмо не отправлено."""
@@ -849,7 +876,11 @@ def thread_key(subject, unid=""):
 
 
 def group_threads(emails):
-    """Проставляет письмам ключ ветки и её размер."""
+    """Проставляет письмам ключ ветки и её размер.
+
+    threadRoot — «первый элемент» цепочки (самое свежее письмо ветки). Именно он
+    показывается, когда цепочка свёрнута, и именно его пометка наследуется
+    остальным письмам ветки. Остальные письма — вложенные."""
     groups = {}
     for e in emails:
         k = thread_key(e.get("subject"), e.get("unid", ""))
@@ -860,6 +891,7 @@ def group_threads(emails):
         for i, e in enumerate(items):
             e["threadSize"] = len(items)
             e["threadLatest"] = (i == 0)
+            e["threadRoot"] = (i == 0)
     return emails
 
 
@@ -1496,6 +1528,23 @@ def set_doc_read_status(unid, read_state=True):
     return False, None, "none"
 
 
+def set_docs_read_status(unids, read_state=True):
+    """Пакетная пометка прочтения для цепочки писем: первый элемент помечает
+    всю ветку, поэтому на вход приходит список её UNID. Возвращает результат
+    по каждому письму, чтобы фронтенд видел, что Notes применил или отверг."""
+    results = []
+    for unid in (unids or []):
+        success, actual, how = set_doc_read_status(unid, read_state)
+        results.append({
+            "unid": unid,
+            "ok": success,
+            "is_read": actual if actual is not None else read_state,
+            "verified": actual is not None,
+            "source": how,
+        })
+    return results
+
+
 # ============================================================================
 #  СВОДКА И ЧАТ ПО ПОЧТЕ
 # ============================================================================
@@ -1542,6 +1591,30 @@ def ask_model(messages, temperature=0.2, timeout=180.0, expect_json=True):
         return None, f"модель вернула не JSON: {e}"
 
 
+def fetch_balance():
+    """Остаток средств на аккаунте DeepSeek.
+
+    GET {base_url}/user/balance с тем же API-ключом. Возвращает (json, ошибка).
+    Если поднят прокси без этого endpoint'а — вернётся ошибка, UI покажет её
+    спокойно, не ломая работу дашборда."""
+    cfg = load_config()
+    api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
+    base_url = cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/")
+    if not api_key:
+        return None, "не задан ключ API в настройках"
+    try:
+        req = urllib.request.Request(f"{base_url}/user/balance",
+                                     headers={"Authorization": f"Bearer {api_key}",
+                                              "Accept": "application/json"})
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8")), None
+    except Exception as e:
+        return None, str(e)
+
+
 def compact_index(emails, limit=220, body_chars=0, body_for=60):
     """Сжатая выжимка почты для запросов «по всему потоку»."""
     def weight(e):
@@ -1585,8 +1658,11 @@ def compact_index(emails, limit=220, body_chars=0, body_for=60):
 
 def build_digest(emails, days):
     """AI-сводка по всему собранному потоку."""
-    if not emails:
-        return None, "нет писем для сводки"
+    # Отработанное в сводку не попадает: сводка — про то, что ещё требует
+    # внимания. В работе («wip») и новые остаются.
+    active = [e for e in (emails or []) if e.get("workState", "new") != "done"]
+    if not active:
+        return None, "нет активных писем для сводки (всё отработано)"
     cfg = load_config()
     try:
         with open(DIGEST_FILE, "r", encoding="utf-8") as f:
@@ -1597,13 +1673,13 @@ def build_digest(emails, days):
     prompt = (tpl
         .replace("[[TODAY]]", datetime.now().strftime("%Y-%m-%d (%A)"))
         .replace("[[PERIOD]]", f"последние {days} рабочих дн.")
-        .replace("[[EMAIL_COUNT]]", str(len(emails)))
+        .replace("[[EMAIL_COUNT]]", str(len(active)))
         .replace("[[E_TOP_LIST]]", cfg.get("TAGS", "e_top", fallback=""))
         .replace("[[E_DIR_LIST]]", cfg.get("TAGS", "e_dir", fallback=""))
         .replace("[[EMAILS_PAYLOAD]]",
-                 json.dumps(compact_index(emails), ensure_ascii=False, indent=1)))
+                 json.dumps(compact_index(active), ensure_ascii=False, indent=1)))
 
-    print(f"[*] Готовлю сводку по {len(emails)} письмам...")
+    print(f"[*] Готовлю сводку по {len(active)} активным письмам...")
     data, err = ask_model(
         [{"role": "system", "content": "Ты ассистент руководителя. Отвечай только валидным JSON."},
          {"role": "user", "content": prompt}], temperature=0.3)
@@ -1611,7 +1687,7 @@ def build_digest(emails, days):
         print(f"[!] Сводка не собралась: {err}")
         return None, err
 
-    known = {str(e.get("id")) for e in emails}
+    known = {str(e.get("id")) for e in active}
     watch = [w for w in (data.get("watchlist") or []) if str(w.get("id")) in known][:8]
     result = {
         "brief": str(data.get("brief", "")).strip(),
@@ -1937,8 +2013,18 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 "skip_weekends": cfg.getboolean("UI", "skip_weekends", fallback=True),
                 "skip_ai_for_system": cfg.getboolean("UI", "skip_ai_for_system", fallback=True),
                 "subject_block": cfg.get("UI", "subject_block", fallback=DEFAULT_SUBJECT_BLOCK),
+                # «Отработать все»: закрывать письма старше этого срока (по умолчанию 1 день)
+                "auto_done_days": cfg.getint("UI", "auto_done_days", fallback=1),
                 "read_detection": READ_DETECTION
             }
+            self.send_json(200, data)
+
+        elif self.path.split("?")[0] == "/api/balance":
+            # Остаток средств на аккаунте DeepSeek (GET /user/balance)
+            data, err = fetch_balance()
+            if err:
+                self.send_json(502, {"error": err})
+                return
             self.send_json(200, data)
 
         elif self.path.split("?")[0] == "/api/data":
@@ -2028,14 +2114,21 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/mark-read":
             try:
-                unid = req_data.get("unid", "")
+                # Один unid — как раньше; список unids — когда помечается
+                # первый элемент цепочки и метка наследуется всей ветке.
                 is_read = req_data.get("is_read", True)
-                success, actual, how = set_doc_read_status(unid, is_read)
+                unids = req_data.get("unids") or ([req_data["unid"]] if req_data.get("unid") else [])
+                if not unids:
+                    self.send_json(400, {"error": "unid обязателен"})
+                    return
+                results = set_docs_read_status(unids, is_read)
+                first = results[0] if results else {}
                 self.send_json(200, {
-                    "status": "ok" if success else "failed",
-                    "is_read": actual if actual is not None else is_read,
-                    "verified": actual is not None,
-                    "source": how
+                    "status": "ok" if all(r["ok"] for r in results) else "partial",
+                    "results": results,
+                    "is_read": first.get("is_read", is_read),
+                    "verified": first.get("verified", False),
+                    "source": first.get("source", "none")
                 })
             except Exception as e:
                 self.send_json(500, {"error": str(e)})
@@ -2079,21 +2172,24 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/set-state":
             try:
-                unid = req_data.get("unid", "")
                 status = req_data.get("status", "new")
-                if not unid:
+                # unids — список писем цепочки, когда помечается первый элемент
+                # и состояние наследуется всей ветке; unid — одно письмо.
+                unids = req_data.get("unids") or ([req_data["unid"]] if req_data.get("unid") else [])
+                if not unids:
                     self.send_json(400, {"error": "unid обязателен"})
                     return
-                saved, err = set_work_state(unid, status)
+                saved, err = set_work_states(unids, status)
                 if err:
                     self.send_json(400, {"error": err})
                     return
                 # отработка может заодно проставлять метку прочтения в Notes
                 if req_data.get("mark_read"):
-                    try:
-                        set_doc_read_status(unid, True)
-                    except Exception as mark_err:
-                        print(f"[!] Отработка: метку прочтения выставить не удалось: {mark_err}")
+                    for u in unids:
+                        try:
+                            set_doc_read_status(u, True)
+                        except Exception as mark_err:
+                            print(f"[!] Отработка: метку прочтения выставить не удалось: {mark_err}")
                 self.send_json(200, {"status": "ok" if saved else "failed"})
             except Exception as e:
                 self.send_json(500, {"error": str(e)})
@@ -2146,6 +2242,12 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                     put("UI", "skip_ai_for_system", "True" if req_data["skip_ai_for_system"] else "False")
                 if "subject_block" in req_data:
                     put("UI", "subject_block", str(req_data["subject_block"]).strip())
+                if "auto_done_days" in req_data:
+                    try:
+                        put("UI", "auto_done_days", str(int(req_data["auto_done_days"])))
+                    except (TypeError, ValueError):
+                        self.send_json(400, {"error": "поле «auto_done_days» должно быть числом"})
+                        return
 
                 cached_emails = []
                 try:

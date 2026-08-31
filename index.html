@@ -414,6 +414,26 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
   background:var(--surface-2); border:1px solid var(--line-soft);
   border-radius:999px; padding:1px 6px; margin-left:6px; }
 
+/* ── Цепочки писем ──
+   Письма одной темы свёрнуты в блок по умолчанию: видна только голова
+   (первый элемент), вложенные открываются по стрелке. */
+.chain { border:1px solid var(--line); border-radius:var(--radius-sm);
+         margin:0 8px 6px; overflow:hidden; background:var(--surface); }
+.chain .item { border-bottom-color:var(--line-soft); }
+.chain .item:last-child { border-bottom:none; }
+.chain-toggle { border:1px solid var(--line); background:var(--surface-raise);
+  color:var(--text-2); border-radius:var(--radius-sm); width:20px; height:20px;
+  display:inline-grid; place-items:center; cursor:pointer; font-size:10px;
+  line-height:1; flex-shrink:0; margin-left:6px; }
+.chain-toggle:hover { border-color:var(--accent); color:var(--accent-text); background:var(--accent-soft); }
+.chain-n { margin-left:6px; color:var(--accent-text); background:var(--accent-soft); border-color:var(--accent); }
+.chain-child { background:var(--surface-2); }
+.chain-child.unread { background:var(--row-unread); }
+.chain-child:hover, .chain-child.unread:hover { background:var(--surface-raise); }
+.chain-child .who { color:var(--text-3); }
+.chain-child .subj { font-size:13.5px; }
+.chain-child-n { margin-left:6px; }
+
 @media (max-width:900px) {
   body { overflow:auto; }
   .work { grid-template-columns:1fr; height:auto; }
@@ -447,6 +467,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
       <button class="btn primary" id="btnSync" onclick="sync(false)">
         <span id="syncIc">↻</span><span id="syncTx">Собрать и разобрать</span>
       </button>
+      <button class="btn" onclick="doneAllOld()" title="Отработать все письма старше периода из настроек. Письма «В работе» остаются не отработанными.">Отработать все</button>
       <button class="btn icon ghost" onclick="openSettings()" title="Настройки">⚙</button>
       <button class="btn icon ghost" onclick="toggleTheme()" title="Сменить тему">◐</button>
     </div>
@@ -675,6 +696,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
           <label for="sKey">Ключ API</label>
           <input type="password" id="sKey" autocomplete="off">
           <div class="help" id="sKeyHint"></div>
+          <div class="help" id="sBalance"></div>
         </div>
       </div>
 
@@ -686,6 +708,12 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
             <span>При отработке помечать письмо прочитанным в Lotus Notes.
             Если выключено, отработка живёт только в дашборде и почтовую базу не трогает.</span>
           </label>
+        </div>
+        <div class="field">
+          <label for="sAutoDone">«Отработать все»: закрывать письма старше, дней</label>
+          <input type="number" id="sAutoDone" min="0" max="60">
+          <div class="help">Кнопка «Отработать все» помечает отработанными письма старше этого срока.
+          Письма «В работе» не затрагиваются. По умолчанию — 1 день.</div>
         </div>
         <div class="resolved" id="sDiag"></div>
       </div>
@@ -729,11 +757,88 @@ let preset = 'any';
 let readDetection = null, markReadOnDone = true, cfg = {}, onlyUnread = false;
 let aiStats = null;
 let digest = null, pane = 'mail', chatHistory = [], chatBusy = false;
+/* Свёрнутые цепочки. По умолчанию ВСЕ цепочки свёрнуты: ключ ветки лежит в
+   collapsedChains, разворачивание убирает его, сворачивание — возвращает. */
+let collapsedChains = new Set();
+let chainMap = new Map();   // threadKey -> письма ветки, голова (первый элемент) первая
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const key = e => e.unid || ('id:' + e.id);
 const byKey = k => emails.find(e => key(e) === k);
+
+/* ═══════════════ ЦЕПОЧКИ ═══════════════
+   Письма одной темы (HA: >>: … и их ответы) собираются в цепочку. Голова —
+   самое свежее письмо ветки, её пометка наследуется всей цепочке; пометка
+   вложенного письма действует только на него. */
+function rebuildChainMap() {
+  chainMap = new Map();
+  for (const e of emails) {
+    if (!e.threadKey) continue;
+    if (!chainMap.has(e.threadKey)) chainMap.set(e.threadKey, []);
+    chainMap.get(e.threadKey).push(e);
+  }
+  chainMap.forEach(arr => arr.sort((a, b) => (parseDate(b) || 0) - (parseDate(a) || 0)));
+  collapsedChains = new Set([...chainMap.entries()]
+    .filter(([, arr]) => arr.length > 1)
+    .map(([tk]) => tk));
+}
+
+/* Письма, которые затрагивает пометка: для первого элемента — вся ветка,
+   для вложенного — только само письмо. */
+function chainMembersOf(e) {
+  const arr = chainMap.get(e.threadKey);
+  if (arr && arr.length > 1 && arr[0] === e) return arr;
+  return [e];
+}
+
+function toggleChain(tk, ev) {
+  if (ev) ev.stopPropagation();
+  if (collapsedChains.has(tk)) collapsedChains.delete(tk); else collapsedChains.add(tk);
+  render();
+}
+
+/* Единицы отрисовки: цепочка одним блоком (если её голова видна) или письмо.
+   Если голова отфильтрована (например, включён фильтр «только новые»),
+   вложенные письма показываются обычными строками — сворачивать нечего. */
+function buildRenderUnits(rows) {
+  const rowSet = new Set(rows.map(key));
+  const active = new Set();
+  for (const e of rows) {
+    const arr = chainMap.get(e.threadKey);
+    if (arr && arr.length > 1 && arr[0] === e && rowSet.has(key(arr[0]))) active.add(e.threadKey);
+  }
+  const units = [];
+  const handled = new Set();
+  for (const e of rows) {
+    const k = key(e);
+    if (handled.has(k)) continue;
+    if (e.threadKey && active.has(e.threadKey)) {
+      const arr = chainMap.get(e.threadKey);
+      const visibleMembers = arr.filter(m => rowSet.has(key(m)));
+      units.push({ chain: true, head: arr[0], members: visibleMembers, threadKey: e.threadKey });
+      visibleMembers.forEach(m => handled.add(key(m)));
+    } else {
+      units.push({ chain: false, email: e });
+      handled.add(k);
+    }
+  }
+  return units;
+}
+
+/* Ключи строк в том виде, в каком они реально показаны (для навигации). */
+function displayedKeys() {
+  const units = buildRenderUnits(visible());
+  const keys = [];
+  units.forEach(u => {
+    if (u.chain) {
+      keys.push(key(u.head));
+      if (!collapsedChains.has(u.threadKey))
+        u.members.forEach(m => { if (m !== u.head) keys.push(key(m)); });
+    } else keys.push(key(u.email));
+  });
+  return keys;
+}
 
 function toast(msg, actionLabel, onAction) {
   const t = $('toast');
@@ -885,6 +990,7 @@ async function init() {
   }
   if (data && data.emails) {
     emails = data.emails;
+    rebuildChainMap();
     digest = data.digest || null;
     readDetection = data.read_detection || null;
     aiStats = data.ai_stats || null;
@@ -957,6 +1063,7 @@ async function sync(skipAI) {
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || ('сервер вернул ' + res.status));
     emails = d.emails || [];
+    rebuildChainMap();
     digest = d.digest || null;
     readDetection = d.read_detection || null;
     aiStats = d.ai_stats || null;
@@ -986,6 +1093,7 @@ async function reloadData() {
     if (!r.ok) throw new Error('сервер вернул ' + r.status);
     const d = await r.json();
     emails = d.emails || [];
+    rebuildChainMap();
     digest = d.digest || null;
     readDetection = d.read_detection || null;
     aiStats = d.ai_stats || null;
@@ -1004,12 +1112,17 @@ async function reloadData() {
 function renderAll() { render(); renderDigest(); }
 
 /* ═══════════════ ОТРАБОТКА ═══════════════ */
-async function pushState(e, status) {
-  if (!e.unid) return;
+async function pushState(e, status) { return pushStates([e], status); }
+
+/* Отметка состояния. Список писем нужен для цепочек: помечается первый
+   элемент — состояние получает вся ветка (unids уходит на сервер одним пакетом). */
+async function pushStates(list, status) {
+  const unids = (list || []).filter(e => e.unid).map(e => e.unid);
+  if (!unids.length) return;
   try {
     await fetch('/api/set-state', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ unid:e.unid, status, mark_read: status === 'done' && markReadOnDone })
+      body: JSON.stringify({ unids, status, mark_read: status === 'done' && markReadOnDone })
     });
   } catch (err) { toast('Состояние не сохранилось на диск: ' + err.message); }
 }
@@ -1017,28 +1130,43 @@ async function pushState(e, status) {
 function setState(k, status, opts) {
   opts = opts || {};
   const e = byKey(k); if (!e) return;
-  const prevState = state(e), prevRead = e.isRead, prevAt = e.stateAt;
-  // Соседа запоминаем ДО смены состояния: если письмо уйдёт из списка,
-  // фокус должен перейти на следующее, а не оставить пустую читалку.
+  /* Первый элемент цепочки помечает все письма ветки, вложенный — только себя. */
+  const targets = chainMembersOf(e);
+  const snapshots = targets.map(t => ({ t, s: state(t), r: t.isRead, at: t.stateAt }));
+  const targetKeys = new Set(targets.map(key));
+  // Соседа запоминаем ДО смены состояния: если письмо (или вся цепочка)
+  // уйдёт из списка, фокус должен перейти на следующее, а не оставить
+  // пустую читалку.
   const rowsBefore = visible();
   const pos = rowsBefore.findIndex(x => key(x) === k);
-  const neighbour = pos >= 0 ? (rowsBefore[pos + 1] || rowsBefore[pos - 1]) : null;
+  let neighbour = null;
+  if (pos >= 0) {
+    for (let i = pos + 1; i < rowsBefore.length; i++)
+      if (!targetKeys.has(key(rowsBefore[i]))) { neighbour = rowsBefore[i]; break; }
+    if (!neighbour)
+      for (let i = pos - 1; i >= 0; i--)
+        if (!targetKeys.has(key(rowsBefore[i]))) { neighbour = rowsBefore[i]; break; }
+  }
 
-  e.workState = status;
-  e.stateAt = new Date().toISOString();
-  if (status === 'done' && markReadOnDone) e.isRead = true;
+  targets.forEach(t => {
+    t.workState = status;
+    t.stateAt = new Date().toISOString();
+    if (status === 'done' && markReadOnDone) t.isRead = true;
+  });
 
   if (selectedKey === k && !visible().some(x => key(x) === k)) {
     selectedKey = neighbour ? key(neighbour) : null;
   }
   renderAll();
-  pushState(e, status);
+  pushStates(targets, status);
   if (opts.silent) return;
   const label = status === 'done' ? 'Отработано' : status === 'wip' ? 'Отложено в работу' : 'Возвращено в разбор';
-  toast(label + ': ' + String(e.subject || '').slice(0, 38), 'Отменить', () => {
-    e.workState = prevState; e.isRead = prevRead; e.stateAt = prevAt;
+  const chainNote = targets.length > 1 ? ` · цепочка из ${targets.length}` : '';
+  toast(label + chainNote + ': ' + String(e.subject || '').slice(0, 38), 'Отменить', () => {
+    snapshots.forEach(p => { p.t.workState = p.s; p.t.isRead = p.r; p.t.stateAt = p.at; });
     selectedKey = k;
-    renderAll(); pushState(e, prevState);
+    renderAll();
+    snapshots.forEach(p => pushState(p.t, p.s));
   });
 }
 
@@ -1068,20 +1196,68 @@ function markWip(k) { setState(k, 'wip'); }
 function markNew(k) { setState(k, 'new'); }
 
 function doneAllVisible() {
-  const rows = visible().filter(e => !isDone(e));
-  if (!rows.length) { toast('В этом списке нечего отрабатывать'); return; }
-  if (!confirm(`Отметить отработанными ${rows.length} писем из текущего списка?`)) return;
-  const snapshot = rows.map(e => ({ e, s: state(e), r: e.isRead, at: e.stateAt }));
-  rows.forEach(e => {
+  // Цепочка — одно дело: отметив её голову, «Всё» закрывает все письма ветки,
+  // поэтому собираем уникальные письма с учётом наследования.
+  const seen = new Set();
+  const targets = [];
+  for (const e of visible()) {
+    for (const m of chainMembersOf(e)) {
+      const mk = key(m);
+      if (seen.has(mk) || isDone(m)) continue;
+      seen.add(mk); targets.push(m);
+    }
+  }
+  if (!targets.length) { toast('В этом списке нечего отрабатывать'); return; }
+  if (!confirm(`Отметить отработанными ${targets.length} писем из текущего списка?`)) return;
+  const snapshot = targets.map(e => ({ e, s: state(e), r: e.isRead, at: e.stateAt }));
+  targets.forEach(e => {
     e.workState = 'done'; e.stateAt = new Date().toISOString();
     if (markReadOnDone) e.isRead = true;
-    pushState(e, 'done');
   });
   renderAll();
-  toast(`Отработано писем: ${rows.length}`, 'Отменить', () => {
+  pushStates(targets, 'done');
+  toast(`Отработано писем: ${targets.length}`, 'Отменить', () => {
     snapshot.forEach(p => { p.e.workState = p.s; p.e.isRead = p.r; p.e.stateAt = p.at; pushState(p.e, p.s); });
     renderAll();
   });
+}
+
+/* «Отработать все»: закрывает письма старше периода из настроек (auto_done_days,
+   по умолчанию 1 день). Письма «В работе» не затрагиваются — они остаются
+   не отработанными, чтобы не потерять текущие задачи. */
+function doneAllOld() {
+  const keepDays = cfg.auto_done_days !== undefined && cfg.auto_done_days !== ''
+    ? Number(cfg.auto_done_days) : 1;
+  const cutoff = Date.now() - (Math.max(0, keepDays) * 86400000);
+  const targets = emails.filter(e => {
+    if (isWip(e) || isDone(e)) return false;          // «в работе» и готовые не трогаем
+    const d = parseDate(e);
+    return !!d && d.getTime() < cutoff;
+  });
+  if (!targets.length) {
+    toast(`Нет писем старше ${keepDays} ${plural(keepDays, ['дня','дней','дней'])} (кроме «В работе»)`);
+    return;
+  }
+  if (!confirm(`Отработать ${targets.length} писем старше ${keepDays} ${plural(keepDays, ['дня','дней','дней'])}? Письма «В работе» останутся не отработанными.`)) return;
+  const snapshot = targets.map(e => ({ e, s: state(e), r: e.isRead, at: e.stateAt }));
+  targets.forEach(e => {
+    e.workState = 'done'; e.stateAt = new Date().toISOString();
+    if (markReadOnDone) e.isRead = true;
+  });
+  renderAll();
+  pushStates(targets, 'done');
+  toast(`Отработано писем: ${targets.length}`, 'Отменить', () => {
+    snapshot.forEach(p => { p.e.workState = p.s; p.e.isRead = p.r; p.e.stateAt = p.at; pushState(p.e, p.s); });
+    renderAll();
+  });
+}
+
+/* Склонение: 1 день, 2 дня, 5 дней */
+function plural(n, forms) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return forms[0];
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1];
+  return forms[2];
 }
 
 
@@ -1368,7 +1544,10 @@ function render() {
   let last = null, headIdx = -1, groupCount = 0;
   const closeGroup = () => { if (headIdx >= 0) parts[headIdx] = parts[headIdx].replace('%%CNT%%', groupCount); };
 
-  for (const e of rows) {
+  const units = buildRenderUnits(rows);
+
+  for (const u of units) {
+    const e = u.chain ? u.head : u.email;
     if (groupBy) {
       const g = groupBy === 'queue' ? qName(e) : dayLabel(e);
       if (g !== last) {
@@ -1378,60 +1557,90 @@ function render() {
       }
       groupCount++;
     }
-    /* Порядок ярлыков = порядок вопросов, которые задаёт руководитель:
-       что от меня нужно → насколько срочно → кто пишет → что уже сделано.
-       Ярлык «прочитано» убран: это большинство писем, и он вытеснял остальные;
-       непрочитанность видна по точке слева и жирному шрифту. */
-    /* Порядок = порядок вопросов руководителя:
-       что от меня нужно → сделал ли я что-то → насколько срочно →
-       кто пишет → что это по сути. Обрезаем до четырёх, поэтому
-       факт ответа стоит выше вида письма. */
-    const pills = [];
-    if (waiting(e) && !isDone(e)) pills.push('<span class="pill rep">Нужен ответ</span>');
-    if (e.isReplied) {
-      const last = (e.replies || [])[e.replies.length - 1];
-      const when = last && last.date ? ' ' + dl(last.date) : '';
-      pills.push(`<span class="pill done">Отвечено${esc(when)}</span>`);
-    } else if (e.draft) {
-      pills.push('<span class="pill wip">Черновик</span>');
-    }
-    if (e.priority === 1) pills.push('<span class="pill p1">Срочно</span>');
-    else if (e.priority === 2) pills.push('<span class="pill p2">Важное</span>');
-    if (!e.isRead) pills.push(`<span class="pill new">${readLabel(false)}</span>`);
-    if (isTop(e)) pills.push('<span class="pill top">Руководство</span>');
-    else if (isDir(e)) pills.push('<span class="pill dir">Директор</span>');
-    if (e.overdue) pills.unshift('<span class="pill over">Просрочено</span>');
-    if (e.kind && e.kind !== 'Информирование') pills.push(`<span class="pill kind">${esc(e.kind)}</span>`);
-    if (isWip(e) && !e.draft) pills.push('<span class="pill wip">В работе</span>');
-    if (pills.length > 4) pills.length = 4;   // строка не должна расползаться
-
-    const k = key(e);
-    parts.push(`
-    <div class="item ${e.isRead ? '' : 'unread'} ${isDone(e) ? 'is-done' : ''}"
-         aria-selected="${selectedKey === k}" onclick="select('${k}')" data-key="${k}">
-      <span class="bar ${e.priority === 1 ? 'p1' : e.priority === 2 ? 'p2' : ''}"></span>
-      <span class="mrk">${e.isRead ? '' : '<span class="dot"></span>'}</span>
-      <div class="item-body">
-        <div class="row1">
-          <span class="who">${esc(e.senderName)}</span>
-          ${e.threadSize > 1 ? `<span class="thread-badge">${e.threadSize} в ветке</span>` : ''}
-          ${e.mergedCount > 1 ? `<span class="thread-badge" title="Показано последнее, остальные свёрнуты">${e.mergedCount} напоминаний</span>` : ''}
-          <span class="when">${shortTime(e)}</span>
-        </div>
-        <div class="subj">${esc(e.subject)}</div>
-        ${e.ask ? `<div class="ask-line">→ ${esc(e.ask)}${e.deadline ? ' · до ' + esc(dl(e.deadline)) : ''}</div>` : ''}
-        <div class="snip">${esc(gist(e)).slice(0,180)}</div>
-        ${pills.length ? `<div class="pills">${pills.join('')}</div>` : ''}
-      </div>
-      <div class="quick">
-        <button onclick="markDone('${k}', event)"
-                title="${isDone(e) ? 'Вернуть в разбор' : 'Отработано'}">${isDone(e) ? '↩' : '✓'}</button>
-      </div>
-    </div>`);
+    parts.push(u.chain ? chainHTML(u) : rowHTML(u.email));
   }
   closeGroup();
   list.innerHTML = parts.join('');
   renderReader();
+}
+
+/* Цепочка писем одной темы. Свёрнута по умолчанию: видна только голова
+   (первый элемент); разворачивание показывает вложенные письма. */
+function chainHTML(u) {
+  const tk = u.threadKey;
+  const collapsed = collapsedChains.has(tk);
+  const total = u.head.threadSize || u.members.length;
+  const children = u.members.filter(m => m !== u.head);
+  const chev = `<button class="chain-toggle" onclick="toggleChain('${esc(tk)}', event)"
+      title="${collapsed ? 'Развернуть цепочку' : 'Свернуть цепочку'}"
+      aria-expanded="${!collapsed}">${collapsed ? '▸' : '▾'}</button>`;
+  const badge = `<span class="thread-badge chain-n" title="Цепочка писем по одной теме">${total} в цепочке</span>`;
+  let html = rowHTML(u.head, { isChainHead: true, chainToggle: chev, chainBadge: badge });
+  if (!collapsed && children.length) {
+    html += `<div class="chain-children">${children.map(c => rowHTML(c, { chainChild: true })).join('')}</div>`;
+  }
+  return `<div class="chain" data-tk="${esc(tk)}">${html}</div>`;
+}
+
+function rowHTML(e, o) {
+  o = o || {};
+  const k = key(e);
+  const isChainChild = !!o.chainChild;
+  /* Порядок ярлыков = порядок вопросов, которые задаёт руководитель:
+     что от меня нужно → насколько срочно → кто пишет → что уже сделано.
+     Ярлык «прочитано» убран: это большинство писем, и он вытеснял остальные;
+     непрочитанность видна по точке слева и жирному шрифту. */
+  /* Порядок = порядок вопросов руководителя:
+     что от меня нужно → сделал ли я что-то → насколько срочно →
+     кто пишет → что это по сути. Обрезаем до четырёх, поэтому
+     факт ответа стоит выше вида письма. */
+  const pills = [];
+  if (waiting(e) && !isDone(e)) pills.push('<span class="pill rep">Нужен ответ</span>');
+  if (e.isReplied) {
+    const last = (e.replies || [])[e.replies.length - 1];
+    const when = last && last.date ? ' ' + dl(last.date) : '';
+    pills.push(`<span class="pill done">Отвечено${esc(when)}</span>`);
+  } else if (e.draft) {
+    pills.push('<span class="pill wip">Черновик</span>');
+  }
+  if (e.priority === 1) pills.push('<span class="pill p1">Срочно</span>');
+  else if (e.priority === 2) pills.push('<span class="pill p2">Важное</span>');
+  if (!e.isRead) pills.push(`<span class="pill new">${readLabel(false)}</span>`);
+  if (isTop(e)) pills.push('<span class="pill top">Руководство</span>');
+  else if (isDir(e)) pills.push('<span class="pill dir">Директор</span>');
+  if (e.overdue) pills.unshift('<span class="pill over">Просрочено</span>');
+  if (e.kind && e.kind !== 'Информирование') pills.push(`<span class="pill kind">${esc(e.kind)}</span>`);
+  if (isWip(e) && !e.draft) pills.push('<span class="pill wip">В работе</span>');
+  if (pills.length > 4) pills.length = 4;   // строка не должна расползаться
+
+  /* В цепочке вместо общего «N в ветке» — переключатель и счётчик цепочки. */
+  let threadPart = '';
+  if (isChainChild) threadPart = '<span class="thread-badge chain-child-n">в цепочке</span>';
+  else if (o.isChainHead) threadPart = (o.chainToggle || '') + (o.chainBadge || '');
+  else if (e.threadSize > 1) threadPart = `<span class="thread-badge">${e.threadSize} в ветке</span>`;
+
+  return `
+  <div class="item ${e.isRead ? '' : 'unread'} ${isDone(e) ? 'is-done' : ''} ${isChainChild ? 'chain-child' : ''}"
+       aria-selected="${selectedKey === k}" onclick="select('${k}')" data-key="${k}">
+    <span class="bar ${e.priority === 1 ? 'p1' : e.priority === 2 ? 'p2' : ''}"></span>
+    <span class="mrk">${e.isRead ? '' : '<span class="dot"></span>'}</span>
+    <div class="item-body">
+      <div class="row1">
+        <span class="who">${esc(e.senderName)}</span>
+        ${threadPart}
+        ${e.mergedCount > 1 ? `<span class="thread-badge" title="Показано последнее, остальные свёрнуты">${e.mergedCount} напоминаний</span>` : ''}
+        <span class="when">${shortTime(e)}</span>
+      </div>
+      <div class="subj">${esc(e.subject)}</div>
+      ${e.ask ? `<div class="ask-line">→ ${esc(e.ask)}${e.deadline ? ' · до ' + esc(dl(e.deadline)) : ''}</div>` : ''}
+      <div class="snip">${esc(gist(e)).slice(0,180)}</div>
+      ${pills.length ? `<div class="pills">${pills.join('')}</div>` : ''}
+    </div>
+    <div class="quick">
+      <button onclick="markDone('${k}', event)"
+              title="${isDone(e) ? 'Вернуть в разбор' : 'Отработано'}">${isDone(e) ? '↩' : '✓'}</button>
+    </div>
+  </div>`;
 }
 
 /* Что вы ответили: отправленные письма из Notes и черновики из дашборда */
@@ -1539,6 +1748,13 @@ function renderReader() {
 }
 
 function select(k) {
+  const e = byKey(k);
+  // Переход к вложенному письму (напр. из сводки) сам разворачивает цепочку —
+  // иначе строка не отрисуется и выделение будет не на чем показать.
+  if (e && e.threadKey && collapsedChains.has(e.threadKey)) {
+    const arr = chainMap.get(e.threadKey);
+    if (arr && arr.length > 1 && arr[0] !== e) collapsedChains.delete(e.threadKey);
+  }
   selectedKey = k; render();
   const el = document.querySelector(`.item[data-key="${k}"]`);
   if (el && el.scrollIntoView) el.scrollIntoView({ block:'nearest' });
@@ -1552,18 +1768,32 @@ function openDo(url) { if (url) window.open(url, '_blank', 'noopener'); }
 
 async function toggleRead(k) {
   const e = byKey(k); if (!e) return;
+  /* Первый элемент цепочки помечает прочтение всей ветки, вложенный — только себя. */
+  const targets = chainMembersOf(e);
   const want = !e.isRead;
-  e.isRead = want; e.readKnown = true; render();
-  if (!e.unid) return;
+  targets.forEach(t => { t.isRead = want; t.readKnown = true; });
+  render();
+  const unids = targets.filter(t => t.unid).map(t => t.unid);
+  if (!unids.length) return;
   try {
     const res = await fetch('/api/mark-read', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ unid:e.unid, is_read:want })
+      body: JSON.stringify({ unids, is_read:want })
     });
     const d = await res.json();
-    if (d.status !== 'ok') throw new Error('Notes отклонил смену статуса');
-    if (d.verified && d.is_read !== want) { e.isRead = d.is_read; render(); toast('Notes не применил метку — статус возвращён'); }
-  } catch (err) { e.isRead = !want; render(); toast('Статус в Notes не изменился: ' + err.message); }
+    if (!d.results) throw new Error('Notes отклонил смену статуса');
+    let conflict = false;
+    d.results.forEach(r => {
+      if (r.ok && r.verified && r.is_read !== want) {
+        const t = byKey(r.unid);
+        if (t) { t.isRead = r.is_read; conflict = true; }
+      }
+    });
+    if (conflict) { render(); toast('Notes не применил метку — статус возвращён'); }
+  } catch (err) {
+    targets.forEach(t => { t.isRead = !want; });
+    render(); toast('Статус в Notes не изменился: ' + err.message);
+  }
 }
 
 function openReply(k) {
@@ -1619,7 +1849,7 @@ async function clearData(what) {
     const d = await res.json();
     if (!res.ok || d.error) throw new Error(d.error || `сервер вернул ${res.status}`);
     if (what === 'emails' || what === 'all') {
-      emails = []; selectedKey = null; digest = null; renderDigest();
+      emails = []; rebuildChainMap(); selectedKey = null; digest = null; renderDigest();
       $('status').textContent = 'Данные очищены — нажмите «Собрать и разобрать»';
     }
     if (what === 'state' || what === 'all') {
@@ -1672,6 +1902,7 @@ function openSettings() {
   $('sWeekends').checked = cfg.skip_weekends !== false;
   $('sSkipAiSys').checked = cfg.skip_ai_for_system !== false;
   $('sMarkRead').checked = markReadOnDone;
+  v('sAutoDone', cfg.auto_done_days ?? 1);
 
   const rd = readDetection || {};
   const cand = rd.candidates || {};
@@ -1683,8 +1914,35 @@ function openSettings() {
 
   $('sErr').classList.remove('show');
   $('settingsModal').classList.add('show');
+  loadBalance();
 }
 function closeSettings() { $('settingsModal').classList.remove('show'); dropFocus(); }
+
+/* Баланс аккаунта DeepSeek: GET /user/balance. Показываем рядом с ключом API.
+   Если endpoint недоступен (свой прокси), спокойно сообщаем об этом. */
+async function loadBalance() {
+  const el = $('sBalance');
+  if (!el) return;
+  el.textContent = 'Проверяю баланс DeepSeek…';
+  try {
+    const r = await fetch('/api/balance');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'сервер вернул ' + r.status);
+    const bi = (d.balance_infos || [])[0];
+    if (!bi) {
+      el.textContent = 'Баланс: ' + (d.is_available === false ? 'аккаунт недоступен' : 'нет данных');
+      return;
+    }
+    const cur = bi.currency ? ' ' + esc(bi.currency) : '';
+    const total = bi.total_balance != null ? bi.total_balance : '—';
+    const parts = [];
+    if (bi.granted_balance && Number(bi.granted_balance) > 0) parts.push(`из них бесплатно ${bi.granted_balance}`);
+    if (bi.topped_up_balance && Number(bi.topped_up_balance) > 0) parts.push(`пополнено ${bi.topped_up_balance}`);
+    el.textContent = `Баланс DeepSeek: ${total}${cur}` + (parts.length ? ' · ' + parts.join(', ') : '');
+  } catch (err) {
+    el.textContent = 'Баланс недоступен: ' + err.message;
+  }
+}
 
 async function saveSettings() {
   const num = (id, min, max, label) => {
@@ -1714,7 +1972,8 @@ async function saveSettings() {
       subject_block: $('sBlock').value.trim(),
       skip_weekends: $('sWeekends').checked,
       skip_ai_for_system: $('sSkipAiSys').checked,
-      mark_read_on_done: $('sMarkRead').checked
+      mark_read_on_done: $('sMarkRead').checked,
+      auto_done_days: num('sAutoDone', 0, 60, '«Отработать все»: дней')
     };
     Object.keys(payload).forEach(k => { if (payload[k] === null) delete payload[k]; });
 
@@ -1755,19 +2014,21 @@ document.addEventListener('keydown', ev => {
   }
   if ($('replyModal').classList.contains('show') || $('settingsModal').classList.contains('show')) return;
 
-  const rows = visible();
-  const i = rows.findIndex(x => key(x) === selectedKey);
-  const e = rows[i];
-  const step = d => { if (rows.length) select(key(rows[Math.max(0, Math.min(i + d, rows.length - 1))])); };
+  /* Навигация идёт по реально показанным строкам: свёрнутая цепочка — одна
+     строка, развёрнутая показывает и вложенные письма. */
+  const keys = displayedKeys();
+  const i = keys.indexOf(selectedKey);
+  const e = byKey(selectedKey);
+  const step = d => { if (keys.length) select(keys[Math.max(0, Math.min(i + d, keys.length - 1))]); };
 
   if (ev.key === 'ArrowDown' || ev.key === 'j') { ev.preventDefault(); step(1); }
   else if (ev.key === 'ArrowUp' || ev.key === 'k') { ev.preventDefault(); step(-1); }
   else if (ev.key === 'Enter' && e) openLotus(e.lotus_url);
   else if (e && /^[eEуУ]$/.test(ev.key)) {
     ev.preventDefault();
-    const nxt = rows[i+1] || rows[i-1];          // курсор уезжает на следующее письмо
+    const nxtKey = keys[i + 1] || keys[i - 1];   // курсор уезжает на следующее письмо
     markDone(key(e));
-    if (nxt) { selectedKey = key(nxt); render(); }
+    if (nxtKey) { selectedKey = nxtKey; render(); }
   }
   else if (e && /^[wWцЦ]$/.test(ev.key)) { ev.preventDefault(); markWip(key(e)); }
   else if (e && /^[rRкК]$/.test(ev.key)) { ev.preventDefault(); openReply(key(e)); }
