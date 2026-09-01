@@ -1524,16 +1524,16 @@ function render() {
   const total = emails.length;
   const nUnread = emails.filter(e => !e.isRead).length;
   const rows = visible();
-  /* Метрика «Новых с прошлого сбора / Непрочитанные»: при включённом фильтре
+  /* Метрика «Новые письма / Непрочитанные»: при включённом фильтре
      показывает «сколько видно / сколько всего» (напр. 0/4), чтобы пустой список
      не выглядел так, будто новые письма исчезли. */
   $('mUnread').textContent = onlyUnread ? `${rows.length}/${nUnread}` : nUnread;
   $('mUnread').title = onlyUnread
     ? (bySync()
-        ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
+        ? `${rows.length} писем для обработки из ${nUnread} новых писем`
         : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
     : 'Показать только непрочитанные';
-  $('mUnreadLabel').textContent = bySync() ? 'Новых с прошлого сбора' : 'Непрочитанные';
+  $('mUnreadLabel').textContent = bySync() ? 'Новые письма' : 'Непрочитанные';
   $('mUnread').parentElement.setAttribute('aria-pressed', String(onlyUnread));
 
   const pct = total ? Math.round(nDone / total * 100) : 0;
@@ -1541,12 +1541,12 @@ function render() {
   $('barTx').textContent = total ? `${nDone} из ${total} закрыто · осталось ${total - nDone}` : '—';
 
   /* Счётчик «для обработки»: сколько из всех новых реально видно в списке.
-     Раньше при фильтре «Новых с прошлого сбора» список был пуст из-за очереди/
+     Раньше при фильтре «Новые письма» список был пуст из-за очереди/
      отправителя/типа, и было непонятно, сколько писем «спрятано». */
   if (onlyUnread) {
     $('count').textContent = total
       ? (bySync()
-          ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
+          ? `${rows.length} писем для обработки из ${nUnread} новых писем`
           : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
       : '';
   } else {
@@ -1960,8 +1960,11 @@ function openSettings() {
   const rd = readDetection || {};
   const cand = rd.candidates || {};
   const lines = Object.keys(cand).map(k => `${esc(k)}: ${cand[k]}`).join('<br>');
+  /* «новое с прошлого сбора» — внутренний ключ метода; на экране показываем
+     человекочитаемое «Новые письма», как в метрике. */
+  const mLabel = rd.method === 'новое с прошлого сбора' ? 'Новые письма' : (rd.method || '');
   $('sDiag').innerHTML = '<b>Метки прочтения</b><br>' +
-    (rd.method ? `Источник: <code>${esc(rd.method)}</code>` : 'Сбор ещё не выполнялся') +
+    (mLabel ? `Источник: <code>${esc(mLabel)}</code>` : 'Сбор ещё не выполнялся') +
     (lines ? '<br>Сверка источников:<br>' + lines : '') +
     (rd.detail ? `<br><span style="color:var(--warn)">${esc(rd.detail)}</span>` : '');
 

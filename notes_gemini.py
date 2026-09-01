@@ -1188,11 +1188,18 @@ def _rank_url(u, anchor=""):
 
 def _url_pairs_from_text(text):
     """URL из обычного текста с якорным контекстом слева (~60 знаков).
-    По контексту отличаем «Ссылка на задачу» от «Ссылка документ»."""
+    По контексту отличаем «Ссылка на задачу» от «Ссылка документ».
+    1С часто разбивает адрес пробелом («...Закупок? ref=123») — дописываем
+    недостающий параметр, иначе ссылка обрезается на знаке вопроса."""
     pairs = []
     for m in URL_RE.finditer(text or ""):
+        url = m.group(0)
+        if url.endswith('?') or url.endswith('&'):
+            tail = re.match(r'\s+([\w-]+=[^\s<>&"\'\)\]]+)', text[m.end():])
+            if tail:
+                url += tail.group(1).strip()
         start = max(0, m.start() - 60)
-        pairs.append((m.group(0), text[start:m.start()]))
+        pairs.append((url, text[start:m.start()]))
     return pairs
 
 
@@ -1224,7 +1231,9 @@ def _urls_from_mime(doc):
 def _urls_from_dxl(doc, session):
     """Универсальный путь: выгружаем документ в DXL и вынимаем адреса
     гиперссылок. MIMEOption=1 не вырезает HTML-часть интернет-письма,
-    поэтому в DXL видны и <urllink href="…">, и обычные <a href="…">."""
+    поэтому в DXL видны и <urllink href="…">, и обычные <a href="…">.
+    DXL экранирует HTML как XML (" вместо «), поэтому сущности снимаем
+    ДО поиска ссылок — иначе regex по кавычкам не увидит адреса."""
     out = []
     if session is None:
         return out
@@ -1234,33 +1243,32 @@ def _urls_from_dxl(doc, session):
         exporter.ExitOnFirstFatalError = False
         try:
             exporter.MIMEOption = 1    # DXL_MIME_KEEP_AS_IS — сохранить HTML
-        except Exception:
-            pass
-        xml = str(exporter.Export(doc))
+        except Exception as e:
+            print(f"[i] DXL MIMEOption не установился ({e}) — HTML-часть может не попасть в выгрузку")
+        xml = html.unescape(str(exporter.Export(doc)))
         if xml:
             # <urllink href="…">текст</urllink> и <a href="…">текст</a>
             for u, anchor in _HREF_PAIR_RE.findall(xml):
                 anchor = re.sub(r'<[^>]+>', '', anchor)      # выкинуть вложенные теги
-                out.append((html.unescape(u), html.unescape(anchor).strip()))
+                out.append((u, anchor.strip()))
             # любые href-атрибуты, если парный вариант не сработал
             for u in _HREF_ANY_RE.findall(xml):
-                out.append((html.unescape(u), ""))
+                out.append((u, ""))
             # и просто адреса в тексте DXL
             out.extend(_url_pairs_from_text(xml))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[i] DXL-выгрузка документа не удалась: {e}")
     return out
 
 
 def extract_do_url(doc, body_text="", session=None):
     """URL задачи 1С:ДО. В Body.Text его нет — это гиперссылка в RichText,
-    поэтому текстовый разбор её не видит. Пробуем текст, MIME, затем DXL,
-    и из всех кандидатов выбираем самую «задачную» ссылку (задача > документ)."""
-    candidates = _url_pairs_from_text(body_text or "")
-    if not any(_rank_url(u, a) >= 3 for u, a in candidates):
-        candidates.extend(_urls_from_mime(doc))
-    if not any(_rank_url(u, a) >= 3 for u, a in candidates):
-        candidates.extend(_urls_from_dxl(doc, session))
+    поэтому текстовый разбор её не видит. Собираем кандидатов из ВСЕХ трёх
+    источников (текст, MIME, DXL) и выбираем самую «задачную» ссылку."""
+    candidates = []
+    candidates.extend(_url_pairs_from_text(body_text or ""))
+    candidates.extend(_urls_from_mime(doc))
+    candidates.extend(_urls_from_dxl(doc, session))
 
     best, best_rank = "", -1
     seen = set()
@@ -1270,7 +1278,9 @@ def extract_do_url(doc, body_text="", session=None):
             continue
         seen.add(u)
         r = _rank_url(u, anchor)
-        if r > best_rank:
+        # при равном ранге берём более длинную ссылку: текст может обрезать
+        # адрес по пробелу, а DXL/MIME отдают полный
+        if r > best_rank or (r == best_rank and len(u) > len(best)):
             best, best_rank = u, r
     return best
 
@@ -1279,6 +1289,41 @@ def mentions_do_task(subject, body):
     """Письмо ссылается на задачу документооборота."""
     blob = f"{subject or ''} {body or ''}"
     return bool(re.search(r'1С:ДО|1C:ДО|Ссылка на задачу|ERP\s*УХ|Документооборот', blob, re.I))
+
+
+def backfill_do_urls(emails):
+    """Досбор ссылок 1С:ДО для писем, уже лежащих в кэше (без повторного сбора).
+
+    Нужно, чтобы кнопка «Перейти в ДО» появилась и у «старых» писем, собранных
+    до того, как извлечение ссылок было починено. Открывает Notes один раз и
+    пытается вытащить do_url для писем, где задача документооборота упоминается,
+    а адрес пуст. Возвращает, сколько ссылок удалось дозаполнить."""
+    targets = [e for e in (emails or []) if not e.get("do_url")
+               and e.get("unid")
+               and mentions_do_task(e.get("subject"), e.get("body"))]
+    if not targets:
+        return 0
+    try:
+        session = win32com.client.Dispatch("Lotus.NotesSession")
+        session.Initialize()
+        db = get_mail_database(session)
+    except Exception as e:
+        print(f"[i] Досбор ссылок 1С:ДО пропущен: {e}")
+        return 0
+    got = 0
+    for e in targets:
+        try:
+            doc = db.GetDocumentByUNID(e["unid"])
+            if doc is None:
+                continue
+            url = extract_do_url(doc, e.get("body") or "", session)
+            if url:
+                e["do_url"] = url
+                got += 1
+        except Exception:
+            continue
+    print(f"[i] Ссылок 1С:ДО дозаполнено для старых писем: {got} из {len(targets)}")
+    return got
 
 
 def get_mail_database(session):
@@ -2259,7 +2304,17 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
                     cache = json.load(f)
-                cache["emails"] = apply_work_state(cache.get("emails", []))
+                emails = apply_work_state(cache.get("emails", []))
+                # «Старые» письма из кэша могли быть собраны до починки извлечения
+                # ссылок 1С:ДО — дозаполняем им do_url прямо при загрузке (один раз).
+                try:
+                    if backfill_do_urls(emails):
+                        cache["emails"] = emails
+                        with open(DATA_FILE, "w", encoding="utf-8") as f:
+                            json.dump(cache, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"[i] Досбор ссылок 1С:ДО при загрузке пропущен: {e}")
+                cache["emails"] = emails
                 cache.setdefault("ai_stats", dict(AI_STATS))
                 self.send_json(200, cache)
             except Exception:
