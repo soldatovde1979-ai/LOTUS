@@ -2281,6 +2281,13 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # не засоряем консоль обращениями к статике
 
+    def end_headers(self):
+        # Статику (index.html и пр.) не кэшируем, иначе браузер показывает
+        # старую версию после правок. API уже ставит свой Cache-Control в send_json.
+        if not any(b'Cache-Control' in h for h in self._headers_buffer):
+            self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
     def do_GET(self):
         if self.path == "/api/settings":
             cfg = load_config()
