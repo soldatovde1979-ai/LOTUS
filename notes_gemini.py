@@ -23,8 +23,9 @@ warnings.filterwarnings("ignore")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "set.ini")
-PROMPT_FILE = os.path.join(BASE_DIR, "prompt_template.txt")
+PROMPT_FILE = os.path.join(BASE_DIR, "promt-get-post.txt")
 DIGEST_FILE = os.path.join(BASE_DIR, "digest_template.txt")
+CHAT_PROMPT_FILE = os.path.join(BASE_DIR, "promt-chat-post.txt")
 DATA_FILE = os.path.join(BASE_DIR, "dashboard_data.json")
 STATE_FILE = os.path.join(BASE_DIR, "work_state.json")
 SEEN_FILE = os.path.join(BASE_DIR, "seen_mail.json")
@@ -151,6 +152,19 @@ def load_prompt_template():
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             return f.read()
     return "[[EMAILS_PAYLOAD]]"
+
+
+def load_chat_prompt():
+    """Системный промпт «Чата по почте». Лежит в promt-chat-post.txt,
+    выжимка почты подставляется вместо [[EMAILS_PAYLOAD]]."""
+    if os.path.exists(CHAT_PROMPT_FILE):
+        with open(CHAT_PROMPT_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    return ("Ты ассистент руководителя ИТ-блока. У тебя есть выжимка его почты в JSON. "
+            "Отвечай кратко и по делу, на русском. Опирайся ТОЛЬКО на данные из выжимки — "
+            "если сведений не хватает, так и скажи. Когда ссылаешься на письма, указывай "
+            "их id в поле refs.\n\nПОЧТА:\n[[EMAILS_PAYLOAD]]\n\n"
+            "Верни строго JSON: {\"answer\": \"текст ответа\", \"refs\": [\"id\", ...]}")
 
 
 # ============================================================================
@@ -1705,14 +1719,8 @@ def answer_question(emails, question, history=None):
     if not emails:
         return None, "почта ещё не собрана"
     idx = compact_index(emails, limit=200, body_chars=180, body_for=60)
-    system = (
-        "Ты ассистент руководителя ИТ-блока. У тебя есть выжимка его почты в JSON. "
-        "Отвечай кратко и по делу, на русском. Опирайся ТОЛЬКО на данные из выжимки — "
-        "если сведений не хватает, так и скажи. Когда ссылаешься на письма, указывай "
-        "их id в поле refs.\n\nПОЧТА:\n"
-        + json.dumps(idx, ensure_ascii=False)
-        + "\n\nВерни строго JSON: {\"answer\": \"текст ответа\", \"refs\": [\"id\", ...]}"
-    )
+    system = load_chat_prompt().replace("[[EMAILS_PAYLOAD]]",
+                                        json.dumps(idx, ensure_ascii=False))
     messages = [{"role": "system", "content": system}]
     for turn in (history or [])[-6:]:
         role = "assistant" if turn.get("role") == "assistant" else "user"
