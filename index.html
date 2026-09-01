@@ -1037,6 +1037,15 @@ function applyNotice() {
     let tx = `Найдено ${rd.found_total || 0} писем, в разборе ${rd.total || 0}: ` +
              parts.join(', ') + '.';
     if (cut > 0) tx += ' Поднимите лимит в настройках, если нужен весь поток.';
+    /* Отфильтрованные темы не теряются: уходят ОДНИМ письмом-сводкой в почту
+       Notes (получатель «Получатель сводки», пусто = своя почта). Подсказываем,
+       где искать, чтобы не казалось, что письма пропали. */
+    if (bySubj > 0) {
+      const sentDig = rd.filtered_digest_sent || 0;
+      tx += sentDig > 0
+        ? ` Отфильтрованные ушли в почту Notes одним письмом «Отфильтровано писем: ${bySubj} — сводка».`
+        : ' Отфильтрованные приходят в почту Notes письмом-сводкой (в этот раз сводка не отправлялась: эти письма уже входили в прошлые сводки, новых нет).';
+    }
     if (cached || sent) {
       tx += ` <span class="n-sub">AI-разбор: ${cached} из кэша, ` +
             `${sent} ушло в модель${cached ? ' — повторные сборы почти бесплатны' : ''}.</span>`;
@@ -1454,27 +1463,64 @@ async function sendChat() {
 }
 
 /* ═══════════════ ОЧЕРЕДИ ═══════════════ */
+/* Синхронизирует подсвеченные кнопки очередей и чипы пресетов с состоянием. */
+function syncFilterButtons() {
+  document.querySelectorAll('.metric').forEach(m => {
+    const mm = m.getAttribute('onclick').match(/'(\w+)'/);
+    if (mm) m.setAttribute('aria-pressed', String(mm[1] === queue));
+  });
+  ['any','reply','p1','imp','over','top','them'].forEach(k => {
+    const c = $('p-' + k); if (c) c.setAttribute('aria-pressed', String(k === preset));
+  });
+}
+
+/* Показать только новые/непрочитанные письма. Очередь и остальные фильтры
+   сбрасываются на «Все»: клик по «10 Новых с прошлого сбора» не должен давать
+   пустой список из-за того, что письма спрятаны очередью, пресетом,
+   отправителем, типом или поиском. */
+function showOnlyUnread(qq) {
+  onlyUnread = true;
+  queue = qq || 'all';
+  preset = 'any';
+  const w = $('whoSel'), k = $('kindSel');
+  if (w) w.value = 'any';
+  if (k) k.value = 'any';
+  $('q').value = '';
+  syncFilterButtons();
+  render();
+}
+
 function toggleUnreadFilter() {
-  onlyUnread = !onlyUnread;
-  $('mUnread').parentElement.setAttribute('aria-pressed', String(onlyUnread));
+  if (!onlyUnread) { showOnlyUnread('all'); return; }
+  onlyUnread = false;
+  $('mUnread').parentElement.setAttribute('aria-pressed', String(false));
   render();
 }
 
 function setQueue(qq) {
   queue = qq;
-  document.querySelectorAll('.metric').forEach(m => {
-    const mm = m.getAttribute('onclick').match(/'(\w+)'/);
-    if (mm) m.setAttribute('aria-pressed', String(mm[1] === qq));
-  });
+  syncFilterButtons();
   render();
 }
 
 function setPreset(p) {
   preset = p;
-  ['any','reply','p1','imp','over','top','them'].forEach(k => {
-    const c = $('p-' + k); if (c) c.setAttribute('aria-pressed', String(k === p));
-  });
+  syncFilterButtons();
   render();
+}
+
+/* Разбивка новых писем по очередям — ответ на «куда они делись»: сколько новых
+   писем лежит в каждой очереди, с кнопками перехода к ним. */
+function hiddenNewHint() {
+  const nw = emails.filter(e => !e.isRead);
+  if (!nw.length) return '';
+  const byQ = [['now','Сейчас',isNow], ['later','Потом',isLater], ['wip','В работе',isWip], ['done','Отработано',isDone]]
+    .map(([qq, label, pred]) => ({ qq, label, n: nw.filter(pred).length }))
+    .filter(x => x.n > 0);
+  const btns = [`<button class="chip" onclick="showOnlyUnread('all')">Все — ${nw.length}</button>`]
+    .concat(byQ.map(x => `<button class="chip" onclick="showOnlyUnread('${x.qq}')">${esc(x.label)} — ${x.n}</button>`))
+    .join(' ');
+  return `<div class="hint" style="margin-top:10px">Где они: ${btns}</div>`;
 }
 
 function visible() {
@@ -1523,6 +1569,7 @@ function render() {
   $('c-p-them').textContent  = presetN('them');
   const total = emails.length;
   const nUnread = emails.filter(e => !e.isRead).length;
+  const queueName = {now:'Сейчас', later:'Потом', wip:'В работе', done:'Отработано', all:'Все'}[queue] || queue;
   const rows = visible();
   /* Метрика «Новые письма / Непрочитанные»: при включённом фильтре
      показывает «сколько видно / сколько всего» (напр. 0/4), чтобы пустой список
@@ -1530,7 +1577,7 @@ function render() {
   $('mUnread').textContent = onlyUnread ? `${rows.length}/${nUnread}` : nUnread;
   $('mUnread').title = onlyUnread
     ? (bySync()
-        ? `${rows.length} писем для обработки из ${nUnread} новых писем`
+        ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
         : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
     : 'Показать только непрочитанные';
   $('mUnreadLabel').textContent = bySync() ? 'Новые письма' : 'Непрочитанные';
@@ -1546,11 +1593,21 @@ function render() {
   if (onlyUnread) {
     $('count').textContent = total
       ? (bySync()
-          ? `${rows.length} писем для обработки из ${nUnread} новых писем`
+          ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
           : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
       : '';
+    $('count').title = '';
   } else {
     $('count').textContent = total ? `${rows.length} писем` : '';
+    /* Даже при выключенном фильтре «Новые письма» подсказываем, что новые
+       письма есть, но их прячут очередь/пресет/отправитель/тип/поиск. */
+    const rowsNew = rows.filter(e => !e.isRead).length;
+    const hiddenNew = nUnread - rowsNew;
+    $('count').title = nUnread > 0
+      ? (hiddenNew > 0
+          ? `${nUnread} новых писем с прошлого сбора: видно ${rowsNew}, ещё ${hiddenNew} скрыто очередью или фильтрами. Откройте «Новые письма».`
+          : `${nUnread} новых писем с прошлого сбора — все видны в списке.`)
+      : '';
   }
 
   const list = $('list');
@@ -1563,14 +1620,16 @@ function render() {
     let msg;
     if (onlyUnread) {
       msg = nUnread > 0
-        ? `<div class="big">✉</div><p>${nUnread} ${bySync() ? 'новых писем' : 'непрочитанных писем'} не видны в текущем списке — их прячут очередь, отправитель, тип или поиск. Смените фильтры, чтобы увидеть их.</p>`
+        ? `<div class="big">✉</div><p>${nUnread} ${bySync() ? 'новых писем с прошлого сбора' : 'непрочитанных писем'} не прошли текущие фильтры (очередь, отправитель, тип, поиск).</p>${hiddenNewHint()}`
         : `<div class="big">✓</div><p>${bySync() ? 'Новых писем нет — всё из прошлого сбора просмотрено.' : 'Непрочитанных писем нет.'}</p>`;
+    } else if (bySync() && nUnread > 0) {
+      msg = `<div class="big">✉</div><p><b>${nUnread} новых писем с прошлого сбора</b> не потерялись — их прячут фильтры: сейчас очередь «${esc(queueName)}».</p>${hiddenNewHint()}`;
     } else if (queue === 'now') {
       msg = '<div class="big">✓</div><p>Срочное разобрано. Загляните в «Потом» — там письма, которые могут подождать.</p>';
     } else {
       msg = '<p>Под эти условия ничего не подходит.</p><div class="hint">Смените очередь, отправителя или очистите поиск.</div>';
     }
-    list.innerHTML = `<div class="empty" style="height:220px"><div>${msg}</div></div>`;
+    list.innerHTML = `<div class="empty" style="height:240px"><div>${msg}</div></div>`;
     renderReader(); return;
   }
 

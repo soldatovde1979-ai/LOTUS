@@ -1238,9 +1238,26 @@ def _urls_from_dxl(doc, session):
     if session is None:
         return out
     try:
+        # Читаем Body.Text ДО DXL-выгрузки: Notes хранит гиперссылки в RichText
+        # лениво, и без обращения к тексту DXL выгружается БЕЗ <urllink href>.
+        # Это чинит и свежий сбор, и backfill (там doc открывается заново).
+        try:
+            if doc.HasItem("Body"):
+                _bi = doc.GetFirstItem("Body")
+                if _bi is not None and hasattr(_bi, "Text"):
+                    _ = str(_bi.Text)
+        except Exception:
+            pass
         exporter = session.CreateDXLExporter()
-        exporter.ConvertNotesBitmapsToGIF = False
-        exporter.ExitOnFirstFatalError = False
+        # Свойства необязательны: в одних сборках Domino Objects они есть,
+        # в других (напр. текущей) их нет, и присваивание бросает AttributeError.
+        # Раньше падение здесь прерывало ВСЮ DXL-выгрузку — ссылки из RichText
+        # не доставались, кнопка «Перейти в ДО» не появлялась.
+        for _attr in ("ConvertNotesBitmapsToGIF", "ExitOnFirstFatalError"):
+            try:
+                setattr(exporter, _attr, False)
+            except Exception:
+                pass
         try:
             exporter.MIMEOption = 1    # DXL_MIME_KEEP_AS_IS — сохранить HTML
         except Exception as e:
@@ -1415,6 +1432,14 @@ def send_filtered_digest(db, session, items, cfg):
                     break
             except Exception:
                 pass
+    if not recipient:
+        # MailAddress/MailAddr в окружении пусты — берём иерархическое имя
+        # текущего пользователя Notes (Notes сам резолвит его в SendTo).
+        # Раньше возвращалась ошибка и сводка отфильтрованных не отправлялась.
+        try:
+            recipient = str(session.UserName or "").strip()
+        except Exception:
+            recipient = ""
     if not recipient:
         return False, ("не определён адрес получателя сводки "
                        "(задайте «filtered_digest_to» в настройках)")
