@@ -907,6 +907,10 @@ def group_threads(emails):
             e["threadSize"] = len(items)
             e["threadLatest"] = (i == 0)
             e["threadRoot"] = (i == 0)
+    n_threads = len(groups)
+    n_chained = sum(1 for items in groups.values() if len(items) > 1)
+    if n_chained:
+        print(f"[+] Веток переписки: {n_threads} (в цепочках по 2+ писем: {n_chained})")
     return emails
 
 
@@ -919,6 +923,7 @@ def merge_duplicate_subjects(emails):
     groups = {}
     order = []
     out = []
+    short_subjects = 0          # письма с пустой/короткой темой — их не объединяем
     for e in emails:
         s = str(e.get("subject") or "").strip()
         s = re.sub(r'\s+', ' ', s).lower()
@@ -926,6 +931,7 @@ def merge_duplicate_subjects(emails):
         # Пустые и почти пустые темы не объединяем — это разные письма
         if len(s) < 3:
             out.append(e)
+            short_subjects += 1
             continue
         key = (s, sender)
         if key not in groups:
@@ -935,6 +941,7 @@ def merge_duplicate_subjects(emails):
 
     removed = 0
     superseded = {}
+    merged_groups = []          # (тема, отправитель, сколько писем) — для подробного лога
     for key in order:
         items = groups[key]
         if len(items) < 2:
@@ -959,15 +966,21 @@ def merge_duplicate_subjects(emails):
         keep["body"] = (keep.get("body") or "").rstrip() + block
         out.append(keep)
         removed += len(items) - 1
+        merged_groups.append((key[0], key[1], len(items)))
         # Старые письма группы считаются исполненными автоматически:
         # их вытеснило последнее напоминание, активным остаётся только оно.
         for it in items[1:]:
             u = it.get("unid", "")
             if u:
                 superseded[u] = it.get("dateIso") or ""
+    if short_subjects:
+        print(f"[i] Писем с пустой или короткой темой (в свёртку не входят): {short_subjects}")
     if removed:
         print(f"[+] Объединено писем с одинаковой темой: {removed} "
-              f"(оставлено последнее от каждого отправителя)")
+              f"(оставлено последнее от каждого отправителя, групп: {len(merged_groups)})")
+        for subj, sender, cnt in merged_groups:
+            who = f" от {sender}" if sender else ""
+            print(f"      «{subj}»{who}: {cnt} писем → 1")
     return out, removed, superseded
 
 
@@ -1421,6 +1434,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
     idx = 1
     skipped_by_subject = 0
     skipped_by_limit = max(0, count - max_emails)
+    skipped_by_error = 0
     filtered_out = []          # письма, отсеянные фильтром тем — уходят в письмо-сводку
     filtered_digest_sent = 0
 
@@ -1435,6 +1449,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
             hit = subject_blocked(subject, blocked_patterns)
             if hit:
                 skipped_by_subject += 1
+                print(f"[i] Отсеяно по фильтру тем «{hit}»: «{str(subject)[:50]}»")
                 # Отфильтрованное письмо не теряем: запоминаем шапку и краткое
                 # содержание, чтобы отправить их одним письмом-сводкой.
                 try:
@@ -1481,7 +1496,16 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
                 except Exception as link_err:
                     print(f"[i] Ссылку 1С:ДО достать не удалось: {link_err}")
 
-            print(f"  #{idx:02d} {str(sender)[:24]} | {str(subject)[:40]}")
+            carry = carries_action(subject, clean_body)
+            flags = []
+            if is_replied:
+                flags.append("отв.")
+            if do_link:
+                flags.append("ДО")
+            if carry:
+                flags.append("действие")
+            flag_suffix = "  [" + ", ".join(flags) + "]" if flags else ""
+            print(f"  #{idx:02d} {str(sender)[:24]} | {str(subject)[:40]}{flag_suffix}")
 
             verdict_list.append(verdicts)
             emails.append({
@@ -1505,7 +1529,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
                 "overdue": False,
                 "waitingOn": "",
                 "risk": "",
-                "carriesAction": carries_action(subject, clean_body),
+                "carriesAction": carry,
                 "messageId": message_id(doc),
                 "replies": [],
                 "body": clean_body,
@@ -1514,7 +1538,8 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
             })
             idx += 1
         except Exception as doc_err:
-            print(f"[!] Пропуск: {doc_err}")
+            skipped_by_error += 1
+            print(f"[!] Пропуск (ошибка чтения письма #{idx}): {doc_err}")
 
         doc = collection.GetNextDocument(doc)
 
@@ -1619,6 +1644,40 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
                 print(f"[i] Отфильтровано писем: {len(filtered_out)}, "
                       f"новых среди них — 0 (все уже вошли в сводку)")
         READ_DETECTION["filtered_digest_sent"] = filtered_digest_sent
+
+    # ==================== ИТОГ СБОРА — все проверки по шагам ====================
+    n_threads = len({e.get("threadKey") for e in emails})
+    n_in_threads = sum(1 for e in emails if (e.get("threadSize") or 1) > 1)
+    n_replied = sum(1 for e in emails if e.get("isReplied"))
+    n_action = sum(1 for e in emails if e.get("carriesAction"))
+    print("\n" + "═" * 68)
+    print("ИТОГ СБОРА ПОЧТЫ — все проверки по шагам")
+    print("═" * 68)
+    print(f"  1.  Найдено писем в базе Notes:          {count}")
+    print(f"  2.  Отрезано лимитом (max {max_emails}):      {skipped_by_limit}")
+    if skipped_by_limit:
+        print(f"        — {skipped_by_limit} писем НЕ вошли в разбор: лимит «Максимум писем за сбор»")
+    print(f"  3.  Отсеяно фильтром тем:                {skipped_by_subject}"
+          + (f"  [{', '.join(blocked_patterns)}]" if blocked_patterns else ""))
+    print(f"  4.  Ошибок чтения документов:            {skipped_by_error}")
+    print(f"  5.  Собрано писем в разбор:              {total}")
+    if merged_n:
+        print(f"  6.  Объединено писем с одинаковой темой: {merged_n}")
+        print(f"        → осталось писем после свёртки:     {len(emails)}")
+    print(f"  7.  Новых (непрочитанных) писем:         {unread_count}")
+    print(f"  8.  Веток переписки:                     {n_threads}"
+          + (f"  (в цепочках по 2+ писем: {n_in_threads})" if n_in_threads else ""))
+    if n_replied:
+        print(f"  9.  Писем с привязанными ответами:      {n_replied}")
+    if do_wanted:
+        print(f" 10.  Задач 1С:ДО:                        {do_wanted}"
+              f"  (ссылка извлечена у {do_found})")
+    if n_action:
+        print(f" 11.  Писем с требованием действия:       {n_action}")
+    if filtered_out:
+        print(f" 12.  Отфильтрованных в письмо-сводку:    {len(filtered_out)}"
+              f"  (отправлено сводкой: {filtered_digest_sent})")
+    print("═" * 68)
 
     return apply_work_state(emails)
 
