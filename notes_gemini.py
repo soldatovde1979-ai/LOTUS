@@ -25,6 +25,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "set.ini")
 PROMPT_FILE = os.path.join(BASE_DIR, "promt-get-post.txt")
 DIGEST_FILE = os.path.join(BASE_DIR, "digest_template.txt")
+FILTERED_DIGEST_FILE = os.path.join(BASE_DIR, "filtered_digest_template.txt")
 CHAT_PROMPT_FILE = os.path.join(BASE_DIR, "promt-chat-post.txt")
 DATA_FILE = os.path.join(BASE_DIR, "dashboard_data.json")
 STATE_FILE = os.path.join(BASE_DIR, "work_state.json")
@@ -1295,6 +1296,71 @@ def create_notes_reply(unid, reply_text):
         return None, str(e)
 
 
+def load_filtered_digest_template():
+    """Шаблон письма-сводки по отфильтрованным письмам (filtered_digest_template.txt)."""
+    if os.path.exists(FILTERED_DIGEST_FILE):
+        with open(FILTERED_DIGEST_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    return ("Отфильтровано писем за сбор: [[FILTERED_COUNT]]\n\n"
+            "Эти письма отсеяны фильтром тем и не попали в дашборд.\n"
+            "Ниже — шапки и краткое содержание каждого письма.\n\n[[ITEMS]]")
+
+
+def send_filtered_digest(db, session, items, cfg):
+    """Отправляет ОДНО письмо со списком отфильтрованных писем.
+
+    Получатель — `[UI] filtered_digest_to` из set.ini, если задан; иначе своя
+    почта (MailAddress из окружения Notes). Возвращает (успех, ошибка)."""
+    if not items:
+        return False, "нет отфильтрованных писем"
+    recipient = cfg.get("UI", "filtered_digest_to", fallback="").strip()
+    if not recipient:
+        for env in ("MailAddress", "MailAddr"):
+            try:
+                recipient = str(session.GetEnvironmentString(env, True) or "").strip()
+                if recipient:
+                    break
+            except Exception:
+                pass
+    if not recipient:
+        return False, ("не определён адрес получателя сводки "
+                       "(задайте «filtered_digest_to» в настройках)")
+
+    try:
+        lines = []
+        for i, it in enumerate(items, 1):
+            sender = str(it.get("senderName") or "(Неизвестный)").strip()
+            email = str(it.get("senderEmail") or "").strip()
+            lines.append("═" * 64)
+            lines.append(f"#{i}  {it.get('date') or ''}")
+            lines.append(f"От: {sender}" + (f" <{email}>" if email else ""))
+            lines.append(f"Тема: {it.get('subject') or ''}")
+            brief = str(it.get("body") or "").strip()
+            if brief:
+                lines.append("Краткое содержание:")
+                lines.append(brief[:300])
+            lines.append("")
+
+        template = load_filtered_digest_template()
+        body_text = (template
+            .replace("[[FILTERED_COUNT]]", str(len(items)))
+            .replace("[[ITEMS]]", "\n".join(lines).rstrip()))
+
+        memo = db.CreateDocument()
+        memo.ReplaceItemValue("Form", "Memo")
+        memo.ReplaceItemValue("Subject",
+            f"Отфильтровано писем: {len(items)} — сводка "
+            f"[{datetime.now().strftime('%d.%m.%Y %H:%M')}]")
+        memo.ReplaceItemValue("SendTo", recipient)
+        body = memo.CreateRichTextItem("Body")
+        body.AppendText(body_text)
+        memo.Save(True, True)
+        memo.Send([recipient], False)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True, subject_block=""):
     print(f"\n[*] Чтение почты Notes за последние {days} дн...")
     try:
@@ -1355,6 +1421,8 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
     idx = 1
     skipped_by_subject = 0
     skipped_by_limit = max(0, count - max_emails)
+    filtered_out = []          # письма, отсеянные фильтром тем — уходят в письмо-сводку
+    filtered_digest_sent = 0
 
     while doc is not None:
         try:
@@ -1367,6 +1435,26 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
             hit = subject_blocked(subject, blocked_patterns)
             if hit:
                 skipped_by_subject += 1
+                # Отфильтрованное письмо не теряем: запоминаем шапку и краткое
+                # содержание, чтобы отправить их одним письмом-сводкой.
+                try:
+                    f_unid = str(doc.UniversalID).strip()
+                    f_dv = doc.GetItemValue("DeliveredDate")[0] if doc.HasItem("DeliveredDate") else doc.Created
+                    f_body = ""
+                    if doc.HasItem("Body"):
+                        f_item = doc.GetFirstItem("Body")
+                        if f_item is not None and hasattr(f_item, "Text"):
+                            f_body = f_item.Text.strip()
+                    filtered_out.append({
+                        "unid": f_unid,
+                        "date": str(f_dv)[:16],
+                        "senderName": clean_sender_name(sender),
+                        "senderEmail": extract_sender_email(doc) or "",
+                        "subject": str(subject),
+                        "body": re.sub(r'\s+', ' ', f_body)[:max_chars],
+                    })
+                except Exception:
+                    pass
                 doc = collection.GetNextDocument(doc)
                 continue
 
@@ -1498,6 +1586,40 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
         emails = attach_replies(db, emails, start_date)
     except Exception as rep_err:
         print(f"[!] Привязка ответов пропущена: {rep_err}")
+
+    # Отфильтрованные по теме письма присылаем ОДНИМ письмом-сводкой (шапки +
+    # краткое содержание) и помечаем в seen, чтобы они больше не числились
+    # новыми. Отправляется только то, чего ещё не было в предыдущей сводке.
+    if filtered_out:
+        try:
+            cfg_f = load_config()
+            enabled = cfg_f.getboolean("UI", "filtered_digest_enabled", fallback=True)
+        except Exception:
+            cfg_f, enabled = None, True
+        if cfg_f is None:
+            print(f"[!] Отфильтровано писем: {len(filtered_out)}, "
+                  f"сводку не отправить — не читается set.ini")
+        elif not enabled:
+            print(f"[i] Отфильтровано писем: {len(filtered_out)} (сводка выключена в настройках)")
+        else:
+            seen = load_seen()
+            fresh = [f for f in filtered_out if f.get("unid") not in seen]
+            if fresh:
+                ok, err = send_filtered_digest(db, session, fresh, cfg_f)
+                if ok:
+                    now = datetime.now().isoformat(timespec="seconds")
+                    for f in fresh:
+                        seen.setdefault(f.get("unid"), now)
+                    save_seen(seen)
+                    filtered_digest_sent = len(fresh)
+                    print(f"[+] Отфильтрованных писем отправлено сводкой: {filtered_digest_sent}")
+                else:
+                    print(f"[!] Сводка по отфильтрованным письмам не отправлена: {err}")
+            else:
+                print(f"[i] Отфильтровано писем: {len(filtered_out)}, "
+                      f"новых среди них — 0 (все уже вошли в сводку)")
+        READ_DETECTION["filtered_digest_sent"] = filtered_digest_sent
+
     return apply_work_state(emails)
 
 
@@ -2023,6 +2145,9 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 "subject_block": cfg.get("UI", "subject_block", fallback=DEFAULT_SUBJECT_BLOCK),
                 # «Отработать все»: закрывать письма старше этого срока (по умолчанию 1 день)
                 "auto_done_days": cfg.getint("UI", "auto_done_days", fallback=1),
+                # Письмо-сводка по отфильтрованным темам: вкл/выкл и получатель
+                "filtered_digest_enabled": cfg.getboolean("UI", "filtered_digest_enabled", fallback=True),
+                "filtered_digest_to": cfg.get("UI", "filtered_digest_to", fallback=""),
                 "read_detection": READ_DETECTION
             }
             self.send_json(200, data)
@@ -2256,6 +2381,11 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                     except (TypeError, ValueError):
                         self.send_json(400, {"error": "поле «auto_done_days» должно быть числом"})
                         return
+                if "filtered_digest_enabled" in req_data:
+                    put("UI", "filtered_digest_enabled",
+                        "True" if req_data["filtered_digest_enabled"] else "False")
+                if "filtered_digest_to" in req_data:
+                    put("UI", "filtered_digest_to", str(req_data["filtered_digest_to"]).strip())
 
                 cached_emails = []
                 try:

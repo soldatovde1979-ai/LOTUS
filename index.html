@@ -665,6 +665,19 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         </div>
         <div class="field">
           <label class="check">
+            <input type="checkbox" id="sFilteredDigest">
+            <span>Присылать отфильтрованные письма одним письмом-сводкой.
+            Отсеянные фильтром тем письма не теряются: их шапки и краткое
+            содержание уходят ОДНИМ письмом на ваш адрес, а сами письма
+            помечаются, чтобы больше не числиться новыми.</span>
+          </label>
+        </div>
+        <div class="field">
+          <label for="sFilteredTo">Получатель сводки по отфильтрованным</label>
+          <input type="text" id="sFilteredTo" placeholder="пусто — своя почта Notes">
+        </div>
+        <div class="field">
+          <label class="check">
             <input type="checkbox" id="sSkipAiSys">
             <span>Не гонять автоматические рассылки через AI. Уведомления 1С, Ivanti, порталов
             и служб поддержки получают низкий приоритет без запроса к модели — сбор идёт заметно быстрее.</span>
@@ -1508,18 +1521,37 @@ function render() {
   $('c-p-over').textContent  = presetN('over');
   $('c-p-top').textContent   = presetN('top');
   $('c-p-them').textContent  = presetN('them');
+  const total = emails.length;
   const nUnread = emails.filter(e => !e.isRead).length;
-  $('mUnread').textContent = nUnread;
+  const rows = visible();
+  /* Метрика «Новых с прошлого сбора / Непрочитанные»: при включённом фильтре
+     показывает «сколько видно / сколько всего» (напр. 0/4), чтобы пустой список
+     не выглядел так, будто новые письма исчезли. */
+  $('mUnread').textContent = onlyUnread ? `${rows.length}/${nUnread}` : nUnread;
+  $('mUnread').title = onlyUnread
+    ? (bySync()
+        ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
+        : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
+    : 'Показать только непрочитанные';
   $('mUnreadLabel').textContent = bySync() ? 'Новых с прошлого сбора' : 'Непрочитанные';
   $('mUnread').parentElement.setAttribute('aria-pressed', String(onlyUnread));
 
-  const total = emails.length;
   const pct = total ? Math.round(nDone / total * 100) : 0;
   $('barFill').style.width = pct + '%';
   $('barTx').textContent = total ? `${nDone} из ${total} закрыто · осталось ${total - nDone}` : '—';
 
-  const rows = visible();
-  $('count').textContent = total ? `${rows.length} писем` : '';
+  /* Счётчик «для обработки»: сколько из всех новых реально видно в списке.
+     Раньше при фильтре «Новых с прошлого сбора» список был пуст из-за очереди/
+     отправителя/типа, и было непонятно, сколько писем «спрятано». */
+  if (onlyUnread) {
+    $('count').textContent = total
+      ? (bySync()
+          ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
+          : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
+      : '';
+  } else {
+    $('count').textContent = total ? `${rows.length} писем` : '';
+  }
 
   const list = $('list');
   if (!total) {
@@ -1528,9 +1560,16 @@ function render() {
     renderReader(); return;
   }
   if (!rows.length) {
-    const msg = queue === 'now'
-      ? '<div class="big">✓</div><p>Срочное разобрано. Загляните в «Потом» — там письма, которые могут подождать.</p>'
-      : '<p>Под эти условия ничего не подходит.</p><div class="hint">Смените очередь, отправителя или очистите поиск.</div>';
+    let msg;
+    if (onlyUnread) {
+      msg = nUnread > 0
+        ? `<div class="big">✉</div><p>${nUnread} ${bySync() ? 'новых писем' : 'непрочитанных писем'} не видны в текущем списке — их прячут очередь, отправитель, тип или поиск. Смените фильтры, чтобы увидеть их.</p>`
+        : `<div class="big">✓</div><p>${bySync() ? 'Новых писем нет — всё из прошлого сбора просмотрено.' : 'Непрочитанных писем нет.'}</p>`;
+    } else if (queue === 'now') {
+      msg = '<div class="big">✓</div><p>Срочное разобрано. Загляните в «Потом» — там письма, которые могут подождать.</p>';
+    } else {
+      msg = '<p>Под эти условия ничего не подходит.</p><div class="hint">Смените очередь, отправителя или очистите поиск.</div>';
+    }
     list.innerHTML = `<div class="empty" style="height:220px"><div>${msg}</div></div>`;
     renderReader(); return;
   }
@@ -1903,6 +1942,8 @@ function openSettings() {
   $('sSkipAiSys').checked = cfg.skip_ai_for_system !== false;
   $('sMarkRead').checked = markReadOnDone;
   v('sAutoDone', cfg.auto_done_days ?? 1);
+  $('sFilteredDigest').checked = cfg.filtered_digest_enabled !== false;
+  v('sFilteredTo', cfg.filtered_digest_to || '');
 
   const rd = readDetection || {};
   const cand = rd.candidates || {};
@@ -1973,7 +2014,9 @@ async function saveSettings() {
       skip_weekends: $('sWeekends').checked,
       skip_ai_for_system: $('sSkipAiSys').checked,
       mark_read_on_done: $('sMarkRead').checked,
-      auto_done_days: num('sAutoDone', 0, 60, '«Отработать все»: дней')
+      auto_done_days: num('sAutoDone', 0, 60, '«Отработать все»: дней'),
+      filtered_digest_enabled: $('sFilteredDigest').checked,
+      filtered_digest_to: $('sFilteredTo').value.trim()
     };
     Object.keys(payload).forEach(k => { if (payload[k] === null) delete payload[k]; });
 
