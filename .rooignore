@@ -1,0 +1,5 @@
+# .rooignore
+secrets/
+*.env
+COPY/
+data/logs/
