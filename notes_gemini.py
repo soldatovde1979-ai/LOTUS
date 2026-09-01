@@ -1228,15 +1228,9 @@ def _urls_from_mime(doc):
     return out
 
 
-# MIMEOption есть не во всех сборках Domino Objects. Предупреждение показываем
-# один раз за сессию (а не на каждое письмо), чтобы консоль не засорялась.
-_DXL_MIMEOPT_WARNED = False
-
-
 def _urls_from_dxl(doc, session):
     """Универсальный путь: выгружаем документ в DXL и вынимаем адреса
-    гиперссылок. MIMEOption=1 не вырезает HTML-часть интернет-письма,
-    поэтому в DXL видны и <urllink href="…">, и обычные <a href="…">.
+    гиперссылок: в DXL видны и <urllink href="…">, и обычные <a href="…">.
     DXL экранирует HTML как XML (" вместо «), поэтому сущности снимаем
     ДО поиска ссылок — иначе regex по кавычкам не увидит адреса."""
     out = []
@@ -1263,18 +1257,6 @@ def _urls_from_dxl(doc, session):
                 setattr(exporter, _attr, False)
             except Exception:
                 pass
-        try:
-            exporter.MIMEOption = 1    # DXL_MIME_KEEP_AS_IS — сохранить HTML
-        except Exception:
-            # Не ошибка: свойство недоступно в этой сборке. Гиперссылки RichText
-            # (<urllink>) извлекаются как обычно — HTML-часть MIME нужна только
-            # для интернет-писем, где ссылка лежит в <a href>. Сообщаем один раз.
-            global _DXL_MIMEOPT_WARNED
-            if not _DXL_MIMEOPT_WARNED:
-                _DXL_MIMEOPT_WARNED = True
-                print("[i] DXL: свойство MIMEOption недоступно в этой сборке Domino — "
-                      "HTML-часть MIME не сохраняется в выгрузке, но гиперссылки "
-                      "RichText (<urllink>) извлекаются как обычно.")
         xml = html.unescape(str(exporter.Export(doc)))
         if xml:
             # <urllink href="…">текст</urllink> и <a href="…">текст</a>

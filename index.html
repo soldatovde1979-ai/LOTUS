@@ -163,13 +163,14 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
 .axis select { border:1px solid var(--line); background:var(--surface-raise);
                border-radius:var(--radius-sm); padding:5px 8px; font-size:11.5px;
                font-weight:600; cursor:pointer; }
-.count { font-size:11.5px; color:var(--text-3); margin-left:auto; white-space:nowrap; }
+.count { font-size:12.5px; font-weight:700; color:var(--accent); white-space:nowrap; }
 
-/* Пресеты «Фокус» — производные представления поверх очередей. Все взаимоисключающие,
-   комбинируются с очередью, отправителем, типом и поиском (логика И). */
-.presets { display:flex; gap:6px; padding:0 11px 9px; flex-wrap:wrap; align-items:center; }
-.presets .plabel { font-size:11px; color:var(--text-3); font-weight:600; letter-spacing:.03em; }
-.presets .chip[aria-pressed="true"] { background:var(--violet); border-color:var(--violet); }
+/* «Фокус»-пресеты перенесены в строку АА (рядом со счётчиком): производные
+   представления поверх очередей. Все взаимоисключающие, комбинируются
+   с очередью, отправителем, типом и поиском (логика И). */
+.axis .plabel { font-size:11px; color:var(--text-3); font-weight:600; letter-spacing:.03em; }
+.axis .chip[aria-pressed="true"] { background:var(--violet); border-color:var(--violet); }
+.axis .sep { width:1px; align-self:stretch; background:var(--line-soft); margin:0 2px; }
 
 .list { overflow-y:auto; flex:1; }
 .group { position:sticky; top:0; z-index:2; padding:6px 13px 6px 11px; font-size:10.5px;
@@ -531,7 +532,8 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
       </select>
     </div>
 
-    <div class="presets">
+    <div class="axis">
+      <span class="count" id="count"></span>
       <span class="plabel">Фокус</span>
       <button class="chip" aria-pressed="true"  onclick="setPreset('any')"   id="p-any">Все <span class="cnt" id="c-p-any"></span></button>
       <button class="chip" aria-pressed="false" onclick="setPreset('reply')" id="p-reply">Требуют ответа <span class="cnt" id="c-p-reply"></span></button>
@@ -540,9 +542,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
       <button class="chip" aria-pressed="false" onclick="setPreset('over')"  id="p-over">Просрочено <span class="cnt" id="c-p-over"></span></button>
       <button class="chip" aria-pressed="false" onclick="setPreset('top')"   id="p-top">Руководство <span class="cnt" id="c-p-top"></span></button>
       <button class="chip" aria-pressed="false" onclick="setPreset('them')"  id="p-them">Ждём других <span class="cnt" id="c-p-them"></span></button>
-    </div>
-
-    <div class="axis">
+      <span class="sep"></span>
       <label for="whoSel">От кого</label>
       <select id="whoSel" onchange="render()">
         <option value="any">любой отправитель</option>
@@ -562,7 +562,6 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         <option value="Информирование">информирование</option>
       </select>
       <button class="btn sm" onclick="doneAllVisible()" title="Отметить отработанными все письма в текущем списке">✓ Всё</button>
-      <span class="count" id="count"></span>
     </div>
 
     <div class="list" id="list"></div>
@@ -1022,38 +1021,9 @@ async function init() {
 function applyNotice() {
   const n = $('notice');
   const d = (readDetection && readDetection.detail) || '';
-  const rd = readDetection || {};
-  const cut = rd.skipped_by_limit || 0;
-  const bySubj = rd.skipped_by_subject || 0;
   const cached = (aiStats && aiStats.reused) || 0;
   const sent = (aiStats && aiStats.sent) || 0;
 
-  /* Баланс должен сходиться: найдено = показано + лимит + фильтр тем.
-     Раньше про фильтр тем баннер молчал, и цифры выглядели потерянными. */
-  if (cut > 0 || bySubj > 0) {
-    const parts = [];
-    if (cut > 0) parts.push(`<b>${cut}</b> не влезло в лимит «Максимум писем за сбор»`);
-    if (bySubj > 0) parts.push(`<b>${bySubj}</b> отсеял фильтр тем`);
-    let tx = `Найдено ${rd.found_total || 0} писем, в разборе ${rd.total || 0}: ` +
-             parts.join(', ') + '.';
-    if (cut > 0) tx += ' Поднимите лимит в настройках, если нужен весь поток.';
-    /* Отфильтрованные темы не теряются: уходят ОДНИМ письмом-сводкой в почту
-       Notes (получатель «Получатель сводки», пусто = своя почта). Подсказываем,
-       где искать, чтобы не казалось, что письма пропали. */
-    if (bySubj > 0) {
-      const sentDig = rd.filtered_digest_sent || 0;
-      tx += sentDig > 0
-        ? ` Отфильтрованные ушли в почту Notes одним письмом «Отфильтровано писем: ${bySubj} — сводка».`
-        : ' Отфильтрованные приходят в почту Notes письмом-сводкой (в этот раз сводка не отправлялась: эти письма уже входили в прошлые сводки, новых нет).';
-    }
-    if (cached || sent) {
-      tx += ` <span class="n-sub">AI-разбор: ${cached} из кэша, ` +
-            `${sent} ушло в модель${cached ? ' — повторные сборы почти бесплатны' : ''}.</span>`;
-    }
-    $('noticeTx').innerHTML = tx;
-    n.className = cut > 0 ? 'notice show' : 'notice show soft';
-    return;
-  }
   if (readDetection && readDetection.reliable === false) {
     $('noticeTx').innerHTML = '<b>Статусы прочтения недостоверны.</b> ' +
       esc(d || 'Notes не отдал метки прочтения.') +
@@ -1587,28 +1557,22 @@ function render() {
   $('barFill').style.width = pct + '%';
   $('barTx').textContent = total ? `${nDone} из ${total} закрыто · осталось ${total - nDone}` : '—';
 
-  /* Счётчик «для обработки»: сколько из всех новых реально видно в списке.
-     Раньше при фильтре «Новые письма» список был пуст из-за очереди/
-     отправителя/типа, и было непонятно, сколько писем «спрятано». */
-  if (onlyUnread) {
-    $('count').textContent = total
-      ? (bySync()
-          ? `${rows.length} писем для обработки из ${nUnread} новых писем с прошлого отбора`
-          : `${rows.length} писем для обработки из ${nUnread} непрочитанных`)
-      : '';
-    $('count').title = '';
-  } else {
-    $('count').textContent = total ? `${rows.length} писем` : '';
-    /* Даже при выключенном фильтре «Новые письма» подсказываем, что новые
-       письма есть, но их прячут очередь/пресет/отправитель/тип/поиск. */
-    const rowsNew = rows.filter(e => !e.isRead).length;
-    const hiddenNew = nUnread - rowsNew;
-    $('count').title = nUnread > 0
-      ? (hiddenNew > 0
-          ? `${nUnread} новых писем с прошлого сбора: видно ${rowsNew}, ещё ${hiddenNew} скрыто очередью или фильтрами. Откройте «Новые письма».`
-          : `${nUnread} новых писем с прошлого сбора — все видны в списке.`)
-      : '';
-  }
+  /* Счётчик «для обработки» в начале строки АА: X новых писем, видимых в
+     списке при текущих фильтрах, из Y всего новых/непрочитанных. Показываем
+     всегда (и при включённом фильтре «Новые письма», и без него), чтобы было
+     понятно, сколько новых прячут очередь/пресет/отправитель/тип/поиск. */
+  const rowsNew = rows.filter(e => !e.isRead).length;
+  $('count').textContent = total
+    ? (bySync()
+        ? `${rowsNew} писем для обработки из ${nUnread} новых писем с прошлого отбора`
+        : `${rowsNew} писем для обработки из ${nUnread} непрочитанных`)
+    : '';
+  const hiddenNew = nUnread - rowsNew;
+  $('count').title = nUnread > 0
+    ? (hiddenNew > 0
+        ? `${nUnread} новых писем с прошлого сбора: видно ${rowsNew}, ещё ${hiddenNew} скрыто очередью или фильтрами. Откройте «Новые письма».`
+        : `${nUnread} новых писем с прошлого сбора — все видны в списке.`)
+    : '';
 
   const list = $('list');
   if (!total) {
