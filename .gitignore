@@ -2,3 +2,6 @@
 __pycache__/
 *.py[cod]
 *.pyo
+
+# Данные сбора/состояния (рабочие данные, не в git)
+dashboard_data.json
