@@ -1740,20 +1740,21 @@ function renderReader() {
   else if (isWip(e)) stateLine = `<div class="state-line" style="color:var(--violet)">● В работе${when ? ' · с ' + esc(when) : ''}</div>`;
 
   /* Письма документооборота ведут на задачу в 1С:ДО — если адрес удалось
-     достать при сборе, открываем её напрямую, минуя Lotus. */
+     достать при сборе, открываем её напрямую, минуя Lotus. Кнопка встаёт
+     рядом с «Открыть в Lotus» и открывает ссылку 1С:ДО. */
   const doBtn = e.do_url
     ? `<button class="btn do-act" onclick="openDo('${esc(e.do_url)}')"
-               title="${esc(e.do_url)}">Открыть в ДО</button>` : '';
+               title="${esc(e.do_url)}">Перейти в ДО</button>` : '';
 
   const acts = isDone(e)
     ? `<button class="btn" onclick="markNew('${k}')">↩ Вернуть в разбор</button>
-       ${doBtn}
-       <button class="btn" onclick="openLotus('${e.lotus_url}')">Открыть в Lotus</button>`
+       <button class="btn" onclick="openLotus('${e.lotus_url}')">Открыть в Lotus</button>
+       ${doBtn}`
     : `<button class="btn done-act" onclick="markDone('${k}')">✓ Отработано</button>
-       ${doBtn}
        <button class="btn primary" onclick="openReply('${k}')">Ответить</button>
        ${isWip(e) ? '' : `<button class="btn" onclick="markWip('${k}')">Отложить в работу</button>`}
-       <button class="btn" onclick="openLotus('${e.lotus_url}')">Открыть в Lotus</button>`;
+       <button class="btn" onclick="openLotus('${e.lotus_url}')">Открыть в Lotus</button>
+       ${doBtn}`;
 
   r.innerHTML = `
   <div class="reader-head">
@@ -1802,8 +1803,19 @@ function select(k) {
 
 /* ═══════════════ ДЕЙСТВИЯ ═══════════════ */
 function openLotus(url) { if (url) window.location.assign(url); }
-/* Ссылка 1С:ДО — обычный http-адрес, открываем в новой вкладке браузера */
-function openDo(url) { if (url) window.open(url, '_blank', 'noopener'); }
+/* Ссылка 1С:ДО. http-адреса открываем в новой вкладке; ссылки с нестандартным
+   протоколом (e1c://, notes://…) отдаём браузеру якорным кликом — он сам
+   вызовет зарегистрированный обработчик протокола (клиент 1С, Notes). */
+function openDo(url) {
+  if (!url) return;
+  if (/^https?:/i.test(url)) { window.open(url, '_blank', 'noopener'); return; }
+  const a = document.createElement('a');
+  a.href = url;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 async function toggleRead(k) {
   const e = byKey(k); if (!e) return;

@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import html
 import json
 import configparser
 import urllib.request
@@ -1158,18 +1159,41 @@ def detect_replied(doc):
     return False
 
 
-URL_RE = re.compile(r'(?:https?|notes)://[^\s<>"\'\)\]]+', re.I)
+# Адрес задачи 1С:ДО может быть записан разными протоколами: обычный http/https,
+# notes:// (клиент Notes) и e1c:// / v8:// (клиент 1С). Без e1c:// ссылки вида
+# «Ссылка документ ЕRP УХ: e1c://server/...» просто не попадали в разбор.
+URL_RE = re.compile(r'(?:https?|notes|e1c|v8)://[^\s<>"\'\)\]]+', re.I)
 # Ссылки 1С:ДО и ERP УХ узнаются по маркеру веб-клиента 1С
 DO_HINT = re.compile(r'e1cib|/ru_RU/|1cib|DocsHttp|edoc|/do/', re.I)
+# Ссылка именно на ЗАДАЧУ (в 1С объект называется «Задача…»), а не на документ
+TASK_HINT = re.compile(r'задач', re.I)
+# Гиперссылка вместе с текстом-подписью: <a href="…">…</a> и <urllink href="…">…</urllink>
+_HREF_PAIR_RE = re.compile(
+    r'''<(?:a|urllink)\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</(?:a|urllink)>''',
+    re.I | re.S)
+_HREF_ANY_RE = re.compile(r'''href\s*=\s*["']([^"']+)["']''', re.I)
 
 
-def _rank_url(u):
-    """Чем выше, тем вероятнее это ссылка на задачу 1С:ДО, а не подпись/логотип."""
-    if DO_HINT.search(u):
-        return 3
+def _rank_url(u, anchor=""):
+    """Чем выше, тем вероятнее это ссылка на задачу 1С:ДО, а не подпись/логотип.
+    Бонус за «задачу»: в письме документооборота две ссылки (документ и задача) —
+    кнопка должна открывать именно задачу."""
     if re.search(r'\.(png|jpg|gif|css|js|ico)(\?|$)', u, re.I):
         return 0          # картинки из подписи — точно не задача
-    return 1
+    r = 3 if DO_HINT.search(u) else 1
+    if TASK_HINT.search(u) or TASK_HINT.search(anchor):
+        r += 2
+    return r
+
+
+def _url_pairs_from_text(text):
+    """URL из обычного текста с якорным контекстом слева (~60 знаков).
+    По контексту отличаем «Ссылка на задачу» от «Ссылка документ»."""
+    pairs = []
+    for m in URL_RE.finditer(text or ""):
+        start = max(0, m.start() - 60)
+        pairs.append((m.group(0), text[start:m.start()]))
+    return pairs
 
 
 def _urls_from_mime(doc):
@@ -1185,7 +1209,7 @@ def _urls_from_mime(doc):
             guard += 1
             ent = stack.pop()
             try:
-                out.extend(URL_RE.findall(str(ent.ContentAsText or "")))
+                out.extend(_url_pairs_from_text(str(ent.ContentAsText or "")))
             except Exception:
                 pass
             for nxt in (getattr(ent, "GetFirstChildEntity", lambda: None)(),
@@ -1199,18 +1223,30 @@ def _urls_from_mime(doc):
 
 def _urls_from_dxl(doc, session):
     """Универсальный путь: выгружаем документ в DXL и вынимаем адреса
-    гиперссылок. Работает и там, где RichText-навигатор недоступен."""
+    гиперссылок. MIMEOption=1 не вырезает HTML-часть интернет-письма,
+    поэтому в DXL видны и <urllink href="…">, и обычные <a href="…">."""
     out = []
     if session is None:
         return out
     try:
         exporter = session.CreateDXLExporter()
         exporter.ConvertNotesBitmapsToGIF = False
-        xml = exporter.Export(doc)
+        exporter.ExitOnFirstFatalError = False
+        try:
+            exporter.MIMEOption = 1    # DXL_MIME_KEEP_AS_IS — сохранить HTML
+        except Exception:
+            pass
+        xml = str(exporter.Export(doc))
         if xml:
-            # <urllink href="..."> и просто адреса в тексте DXL
-            out.extend(re.findall(r'href\s*=\s*"([^"]+)"', str(xml), re.I))
-            out.extend(URL_RE.findall(str(xml)))
+            # <urllink href="…">текст</urllink> и <a href="…">текст</a>
+            for u, anchor in _HREF_PAIR_RE.findall(xml):
+                anchor = re.sub(r'<[^>]+>', '', anchor)      # выкинуть вложенные теги
+                out.append((html.unescape(u), html.unescape(anchor).strip()))
+            # любые href-атрибуты, если парный вариант не сработал
+            for u in _HREF_ANY_RE.findall(xml):
+                out.append((html.unescape(u), ""))
+            # и просто адреса в тексте DXL
+            out.extend(_url_pairs_from_text(xml))
     except Exception:
         pass
     return out
@@ -1218,23 +1254,22 @@ def _urls_from_dxl(doc, session):
 
 def extract_do_url(doc, body_text="", session=None):
     """URL задачи 1С:ДО. В Body.Text его нет — это гиперссылка в RichText,
-    поэтому текстовый разбор её не видит. Пробуем MIME, затем DXL,
-    затем обычный текст (вдруг адрес всё-таки написан словами)."""
-    candidates = []
-    candidates.extend(URL_RE.findall(body_text or ""))
-    if not any(_rank_url(u) >= 3 for u in candidates):
+    поэтому текстовый разбор её не видит. Пробуем текст, MIME, затем DXL,
+    и из всех кандидатов выбираем самую «задачную» ссылку (задача > документ)."""
+    candidates = _url_pairs_from_text(body_text or "")
+    if not any(_rank_url(u, a) >= 3 for u, a in candidates):
         candidates.extend(_urls_from_mime(doc))
-    if not any(_rank_url(u) >= 3 for u in candidates):
+    if not any(_rank_url(u, a) >= 3 for u, a in candidates):
         candidates.extend(_urls_from_dxl(doc, session))
 
-    best, best_rank = "", 0
+    best, best_rank = "", -1
     seen = set()
-    for u in candidates:
+    for u, anchor in candidates:
         u = str(u).strip().rstrip('.,;')
         if not u or u in seen:
             continue
         seen.add(u)
-        r = _rank_url(u)
+        r = _rank_url(u, anchor)
         if r > best_rank:
             best, best_rank = u, r
     return best
@@ -1552,7 +1587,7 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
         print(f"[i] Писем с задачами 1С:ДО: {do_wanted}, ссылка извлечена у {do_found}")
         if not do_found:
             print("    Ссылки лежат гиперссылками в RichText; ни MIME, ни DXL их не отдали — "
-                  "кнопка «Открыть в ДО» покажется только там, где адрес удалось достать.")
+                  "кнопка «Перейти в ДО» покажется только там, где адрес удалось достать.")
 
     # Источник меток выбираем ПОСЛЕ сбора — когда видно, что каждый из них насчитал
     source = resolver.decide(verdict_list, total)
