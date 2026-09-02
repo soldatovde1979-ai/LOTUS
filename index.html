@@ -165,12 +165,24 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
                font-weight:600; cursor:pointer; }
 .count { font-size:12.5px; font-weight:700; color:var(--accent); white-space:nowrap; }
 
-/* «Фокус»-пресеты перенесены в строку АА (рядом со счётчиком): производные
-   представления поверх очередей. Все взаимоисключающие, комбинируются
-   с очередью, отправителем, типом и поиском (логика И). */
-.axis .plabel { font-size:11px; color:var(--text-3); font-weight:600; letter-spacing:.03em; }
-.axis .chip[aria-pressed="true"] { background:var(--violet); border-color:var(--violet); }
-.axis .sep { width:1px; align-self:stretch; background:var(--line-soft); margin:0 2px; }
+/* «Фокус»-пресеты и счётчик «X из Y новых для обработки» — в верхней строке метрик
+   (строка АА), рядом с очередями Сейчас/Потом/… . Все взаимоисключающие, комбинируются
+   с очередью, отправителем, типом и поиском (логика И). Свёрнуто: видны «Все» и
+   выбранный пресет; кнопка «›» раскрывает всю панель для выбора. */
+.metrics .plabel { font-size:11px; color:var(--text-3); font-weight:600; letter-spacing:.03em; }
+.metrics .chip[aria-pressed="true"] { background:var(--violet); border-color:var(--violet); }
+.metrics .sep { width:1px; align-self:stretch; background:var(--line-soft); margin:0 2px; }
+.metrics .count { margin-right:4px; }
+.metrics .focus { display:inline-flex; align-items:center; gap:6px; }
+.metrics .focus .chip { display:inline-flex; }
+.metrics .focus .chip.hidden { display:none; }
+.focus-toggle { width:25px; height:25px; flex:0 0 auto; border:1px solid var(--line);
+  background:var(--surface-raise); color:var(--text-2); border-radius:50%;
+  display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+  font-size:15px; line-height:1; font-weight:700; padding:0;
+  transition:transform .15s, color .12s, border-color .12s; }
+.focus-toggle:hover { border-color:var(--accent); color:var(--accent-text); }
+.focus.open .focus-toggle { transform:rotate(180deg); }
 
 .list { overflow-y:auto; flex:1; }
 .group { position:sticky; top:0; z-index:2; padding:6px 13px 6px 11px; font-size:10.5px;
@@ -334,6 +346,10 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
                  letter-spacing:.07em; color:var(--text-3); }
 .brief-head .spark { color:var(--accent); font-size:13px; }
 .brief-head .when { margin-left:auto; font-size:11px; color:var(--text-3); }
+.brief-head .teaser { display:none; font-size:12.5px; color:var(--text-2); flex:1 1 auto;
+                      min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                      text-transform:none; letter-spacing:0; }
+.brief.collapsed .brief-head .teaser { display:block; }
 .brief-text { font-size:15px; line-height:1.62; color:var(--text); }
 .brief-text.empty { color:var(--text-3); font-size:13px; }
 .watch { display:flex; gap:7px; flex-wrap:wrap; margin-top:9px; }
@@ -475,6 +491,21 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
   </div>
 
   <div class="metrics">
+    <span class="count" id="count"></span>
+    <span class="sep"></span>
+    <span class="plabel">Фокус</span>
+    <span class="focus" id="focusBar">
+      <button class="chip" aria-pressed="true"  onclick="setPreset('any')"   id="p-any">Все <span class="cnt" id="c-p-any"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('reply')" id="p-reply">Требуют ответа <span class="cnt" id="c-p-reply"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('p1')"    id="p-p1">Срочно P1 <span class="cnt" id="c-p-p1"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('imp')"   id="p-imp">Важное P1–P2 <span class="cnt" id="c-p-imp"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('over')"  id="p-over">Просрочено <span class="cnt" id="c-p-over"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('top')"   id="p-top">Руководство <span class="cnt" id="c-p-top"></span></button>
+      <button class="chip" aria-pressed="false" onclick="setPreset('them')"  id="p-them">Ждём других <span class="cnt" id="c-p-them"></span></button>
+      <button class="focus-toggle" id="focusToggle" onclick="toggleFocus()"
+              title="Показать все пресеты" aria-expanded="false">›</button>
+    </span>
+    <span class="sep"></span>
     <button class="metric m-now" aria-pressed="true" onclick="setQueue('now')">
       <div class="n" id="mNow">—</div><div class="l">Сейчас</div>
     </button>
@@ -509,6 +540,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
               title="Свернуть сводку" aria-expanded="true">▾</button>
       <span class="spark">✦</span>
       <h3>Сводка по почте</h3>
+      <span class="teaser" id="briefTeaser"></span>
       <span class="when" id="briefWhen"></span>
       <button class="btn sm ghost" onclick="rebuildDigest()" id="btnDigest" title="Пересобрать сводку">↻</button>
     </div>
@@ -533,16 +565,6 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
     </div>
 
     <div class="axis">
-      <span class="count" id="count"></span>
-      <span class="plabel">Фокус</span>
-      <button class="chip" aria-pressed="true"  onclick="setPreset('any')"   id="p-any">Все <span class="cnt" id="c-p-any"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setPreset('reply')" id="p-reply">Требуют ответа <span class="cnt" id="c-p-reply"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setPreset('p1')"    id="p-p1">Срочно P1 <span class="cnt" id="c-p-p1"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setPreset('imp')"   id="p-imp">Важное P1–P2 <span class="cnt" id="c-p-imp"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setPreset('over')"  id="p-over">Просрочено <span class="cnt" id="c-p-over"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setPreset('top')"   id="p-top">Руководство <span class="cnt" id="c-p-top"></span></button>
-      <button class="chip" aria-pressed="false" onclick="setPreset('them')"  id="p-them">Ждём других <span class="cnt" id="c-p-them"></span></button>
-      <span class="sep"></span>
       <label for="whoSel">От кого</label>
       <select id="whoSel" onchange="render()">
         <option value="any">любой отправитель</option>
@@ -766,6 +788,8 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
 let emails = [], topNames = [], dirNames = [], topMails = [], dirMails = [];
 let queue = 'now', selectedKey = null, busy = false, replyKey = null;
 let preset = 'any';
+let focusOpen = false;
+let briefCollapsed = true;
 let readDetection = null, markReadOnDone = true, cfg = {}, onlyUnread = false;
 let aiStats = null;
 let digest = null, pane = 'mail', chatHistory = [], chatBusy = false;
@@ -1018,26 +1042,9 @@ async function init() {
   renderDigest();
 }
 
-function applyNotice() {
-  const n = $('notice');
-  const d = (readDetection && readDetection.detail) || '';
-  const cached = (aiStats && aiStats.reused) || 0;
-  const sent = (aiStats && aiStats.sent) || 0;
-
-  if (readDetection && readDetection.reliable === false) {
-    $('noticeTx').innerHTML = '<b>Статусы прочтения недостоверны.</b> ' +
-      esc(d || 'Notes не отдал метки прочтения.') +
-      ' На очереди это не влияет — они считают важность и вашу отработку.';
-    n.className = 'notice show';
-  } else if (bySync()) {
-    let tx = '<b>Новизну считает дашборд.</b> ' + esc(d);
-    if (cached || sent) {
-      tx += ` <span class="n-sub">AI-разбор: ${cached} из кэша, ${sent} ушло в модель.</span>`;
-    }
-    $('noticeTx').innerHTML = tx;
-    n.className = 'notice show soft';
-  } else n.className = 'notice';
-}
+/* Панель-уведомление под метриками отключена по запросу пользователя: баннер
+   «Новизну считает дашборд…» и «Статусы прочтения недостоверны» больше не показываются. */
+function applyNotice() { /* намеренно пусто */ }
 
 /* ═══════════════ СБОР ═══════════════ */
 async function sync(skipAI) {
@@ -1254,20 +1261,30 @@ function plural(n, forms) {
 
 
 /* ═══════════════ СВОДКА ═══════════════ */
+/* Короткий анонс первой фразы сводки для строки-заголовка. */
+function teaserOf(s) {
+  s = String(s || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  const head = s.slice(0, 120);
+  const i = head.search(/[.!?…]/);
+  const out = (i > 25 ? head.slice(0, i + 1) : head).replace(/\s+$/, '');
+  return out.length < s.length ? out + '…' : out;
+}
+
+/* Компактная сводка: при пустых данных панели нет совсем; при наличии — одна
+   строка-заголовок с кратким итогом (teaser), раскрывается по клику на ▾. */
 function renderDigest() {
+  const b = $('brief');
+  if (!b) return;
+  if (!emails.length || !digest || !digest.brief) {
+    b.style.display = 'none';
+    return;
+  }
+  b.style.display = '';
   const t = $('briefText'), wrap = $('watch'), meta = $('briefMeta');
   $('briefWhen').textContent = digest && digest.built_at
     ? new Date(digest.built_at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
     : '';
-
-  if (!digest || !digest.brief) {
-    t.className = 'brief-text empty';
-    t.textContent = emails.length
-      ? 'Сводка не собрана. Нажмите ↻ — модель прочитает весь поток и опишет картину.'
-      : 'Соберите почту — здесь появится картина дня.';
-    wrap.innerHTML = ''; meta.innerHTML = '';
-    return;
-  }
 
   t.className = 'brief-text';
   t.textContent = digest.brief;
@@ -1301,17 +1318,27 @@ function renderDigest() {
       `</ul></div>`);
   }
   meta.innerHTML = cols.join('');
+
+  const teaser = $('briefTeaser');
+  if (teaser) teaser.textContent = teaserOf(digest.brief) || 'Картина дня собрана — раскройте сводку.';
+  b.classList.toggle('collapsed', briefCollapsed);
+  const tb = $('briefToggle');
+  if (tb) {
+    tb.setAttribute('aria-expanded', String(!briefCollapsed));
+    tb.title = briefCollapsed ? 'Развернуть сводку' : 'Свернуть сводку';
+  }
 }
 
 /* Сворачивание/разворачивание сводки. Состояние не сохраняется —
    после перезагрузки страницы блок всегда развёрнут. */
 function toggleBrief() {
+  briefCollapsed = !briefCollapsed;
   const b = $('brief');
-  const collapsed = b.classList.toggle('collapsed');
+  if (b) b.classList.toggle('collapsed', briefCollapsed);
   const t = $('briefToggle');
   if (t) {
-    t.setAttribute('aria-expanded', String(!collapsed));
-    t.title = collapsed ? 'Развернуть сводку' : 'Свернуть сводку';
+    t.setAttribute('aria-expanded', String(!briefCollapsed));
+    t.title = briefCollapsed ? 'Развернуть сводку' : 'Свернуть сводку';
   }
 }
 
@@ -1442,7 +1469,26 @@ function syncFilterButtons() {
   ['any','reply','p1','imp','over','top','them'].forEach(k => {
     const c = $('p-' + k); if (c) c.setAttribute('aria-pressed', String(k === preset));
   });
+  syncFocusBar();
 }
+
+/* Свёрнутый «Фокус»: по умолчанию видны только «Все» и выбранный пресет,
+   остальные спрятаны за круглой кнопкой «›». Раскрытие показывает всю панель. */
+function syncFocusBar() {
+  const bar = $('focusBar'); if (!bar) return;
+  const t = $('focusToggle');
+  if (t) {
+    t.setAttribute('aria-expanded', String(focusOpen));
+    t.title = focusOpen ? 'Свернуть пресеты' : 'Показать все пресеты';
+  }
+  bar.classList.toggle('open', focusOpen);
+  bar.querySelectorAll('.chip').forEach(c => {
+    const p = c.id.replace('p-', '');
+    c.classList.toggle('hidden', !focusOpen && p !== 'any' && p !== preset);
+  });
+}
+
+function toggleFocus() { focusOpen = !focusOpen; syncFocusBar(); }
 
 /* Показать только новые/непрочитанные письма. Очередь и остальные фильтры
    сбрасываются на «Все»: клик по «10 Новых с прошлого сбора» не должен давать
@@ -1475,6 +1521,7 @@ function setQueue(qq) {
 
 function setPreset(p) {
   preset = p;
+  focusOpen = false;   /* после выбора сворачиваем панель Фокуса обратно */
   syncFilterButtons();
   render();
 }
@@ -1518,6 +1565,7 @@ function visible() {
 
 /* ═══════════════ ОТРИСОВКА ═══════════════ */
 function render() {
+  syncFocusBar();
   const nNow = emails.filter(isNow).length;
   const nLater = emails.filter(isLater).length;
   const nWip = emails.filter(isWip).length;
@@ -1564,8 +1612,8 @@ function render() {
   const rowsNew = rows.filter(e => !e.isRead).length;
   $('count').textContent = total
     ? (bySync()
-        ? `${rowsNew} писем для обработки из ${nUnread} новых писем с прошлого отбора`
-        : `${rowsNew} писем для обработки из ${nUnread} непрочитанных`)
+        ? `${rowsNew} из ${nUnread} новых для обработки`
+        : `${rowsNew} из ${nUnread} непрочитанных для обработки`)
     : '';
   const hiddenNew = nUnread - rowsNew;
   $('count').title = nUnread > 0
