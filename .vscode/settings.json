@@ -1,4 +1,7 @@
 {
     "continue.enableQuickActions": true,
-    "continue.enableConsole": true
+    "continue.enableConsole": true,
+    "powerquery.client.additionalSymbolsDirectories": [
+        "c:/Projects/LOTUS/.vscode/excel-pq-symbols"
+    ]
 }

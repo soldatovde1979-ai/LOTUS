@@ -173,6 +173,55 @@ select.range { border:1px solid var(--line); background:var(--surface-raise);
 .metrics .chip[aria-pressed="true"] { background:var(--violet); border-color:var(--violet); }
 .metrics .sep { width:1px; align-self:stretch; background:var(--line-soft); margin:0 2px; }
 .metrics .count { margin-right:4px; }
+
+/* ── Плавающее окно счётчика «X из Y новых для обработки» ──
+   Клик по надписи раскрывает список новых писем: вошедшие в текущую
+   подборку (видны в списке) — зелёным, скрытые фильтрами — красным. */
+.count-wrap { position:relative; display:inline-flex; align-items:center; }
+.count.clickable { cursor:pointer; }
+.count.clickable:hover { color:var(--accent-text); text-decoration:underline dotted var(--text-3); }
+.count.clickable[aria-pressed="true"] { color:var(--accent-text); text-decoration:underline dotted var(--text-3); }
+.count-pop { position:absolute; top:calc(100% + 8px); left:-4px; z-index:130;
+  width:min(460px, calc(100vw - 24px));
+  background:var(--surface-raise); border:1px solid var(--line);
+  border-radius:var(--radius); box-shadow:var(--shadow-lg);
+  display:flex; flex-direction:column; overflow:hidden;
+  opacity:0; visibility:hidden; transform:translateY(-6px);
+  transition:opacity .14s ease, transform .14s ease, visibility .14s; }
+.count-pop.show { opacity:1; visibility:visible; transform:none; }
+.count-pop > header { display:flex; align-items:center; gap:9px; padding:9px 13px;
+  background:var(--surface-2); border-bottom:1px solid var(--line-soft);
+  font-size:11.5px; font-weight:700; color:var(--text-2); }
+.count-pop-x { margin-left:auto; border:none; background:none; color:var(--text-3);
+  cursor:pointer; font-size:12px; line-height:1; padding:4px 7px; border-radius:6px; }
+.count-pop-x:hover { background:var(--surface-raise); color:var(--text); }
+.count-pop-list { overflow-y:auto; max-height:min(430px, calc(100vh - 240px)); }
+.cpp-sec { position:sticky; top:0; z-index:2; padding:6px 13px; font-size:10.5px;
+  font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+  background:var(--surface-2); border-bottom:1px solid var(--line-soft); }
+.cpp-sec.out b { color:var(--danger); }
+.cpp-sec.in b { color:var(--ok); }
+.cpp-item { display:grid; grid-template-columns:4px 1fr; cursor:pointer;
+  border-bottom:1px solid var(--line-soft); transition:background .1s; }
+.cpp-item:last-child { border-bottom:none; }
+.cpp-item:hover { background:var(--surface-2); }
+.cpp-bar { width:4px; align-self:stretch; }
+.cpp-item.out .cpp-bar { background:var(--danger); }
+.cpp-item.in .cpp-bar { background:var(--ok); }
+.cpp-body { padding:8px 12px 9px 10px; min-width:0; }
+.cpp-row1 { display:flex; align-items:baseline; gap:8px; }
+.cpp-who { font-size:12px; font-weight:700; color:var(--text-2);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cpp-when { margin-left:auto; font-size:11px; color:var(--text-3); white-space:nowrap;
+  font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.cpp-subj { font-size:13px; font-weight:600; margin-top:1px; color:var(--text);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cpp-reason { font-size:11px; margin-top:3px; line-height:1.45; }
+.cpp-item.out .cpp-reason { color:var(--danger); }
+.cpp-item.in .cpp-reason { color:var(--ok); }
+.cpp-empty { padding:26px 16px; text-align:center; color:var(--text-3); font-size:13px; }
+.count-pop > footer { padding:9px 13px; border-top:1px solid var(--line-soft);
+  display:flex; justify-content:flex-end; gap:7px; }
 .metrics .focus { display:inline-flex; align-items:center; gap:6px; }
 .metrics .focus .chip { display:inline-flex; }
 .metrics .focus .chip.hidden { display:none; }
@@ -491,7 +540,18 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
   </div>
 
   <div class="metrics">
-    <span class="count" id="count"></span>
+    <span class="count-wrap">
+      <span class="count" id="count" onclick="toggleCountPop()"
+            title="Нажмите: какие новые письма вошли в подборку, а какие скрыты фильтрами"></span>
+      <div class="count-pop" id="countPop" role="dialog" aria-label="Новые письма: в подборке и вне её">
+        <header>
+          <span id="countPopTitle"></span>
+          <button class="count-pop-x" onclick="closeCountPop()" title="Закрыть">✕</button>
+        </header>
+        <div class="count-pop-list" id="countPopList" onclick="countPopClick(event)"></div>
+        <footer id="countPopFoot"></footer>
+      </div>
+    </span>
     <span class="sep"></span>
     <span class="plabel">Фокус</span>
     <span class="focus" id="focusBar">
@@ -789,6 +849,7 @@ let emails = [], topNames = [], dirNames = [], topMails = [], dirMails = [];
 let queue = 'now', selectedKey = null, busy = false, replyKey = null;
 let preset = 'any';
 let focusOpen = false;
+let countPopOpen = false;   // открыто ли плавающее окно счётчика «X из Y новых для обработки»
 let briefCollapsed = true;
 let readDetection = null, markReadOnDone = true, cfg = {}, onlyUnread = false;
 let aiStats = null;
@@ -1563,6 +1624,133 @@ function visible() {
   return out;
 }
 
+/* ═══════════════ ПОПОВЕР СЧЁТЧИКА «X из Y новых для обработки» ═══════════════
+   «Подборка» здесь — текущий список писем (итог очереди, фокуса, отправителя,
+   типа и поиска). Новые письма, попавшие в список, — «вошли в подборку»,
+   остальные новые скрыты фильтрами. Клик по счётчику показывает их списком:
+   вошедшие — зелёным, скрытые — красным, с причиной скрытия. */
+const QUEUE_NAMES = { now:'Сейчас', later:'Потом', wip:'В работе', done:'Отработано', all:'Все' };
+const PRESET_NAMES = { any:'Все', reply:'Требуют ответа', p1:'Срочно P1', imp:'Важное P1–P2',
+  over:'Просрочено', top:'Руководство', them:'Ждём других' };
+const ownQueueName = e => isNow(e) ? 'Сейчас' : isWip(e) ? 'В работе' : isLater(e) ? 'Потом' : 'Отработано';
+
+/* Почему новое письмо не попало в текущую выборку. Возвращает человекочитаемые
+   причины; пустой массив — письмо прошло бы все фильтры (не должно случаться). */
+function hiddenReasons(e) {
+  const why = [];
+  if (!inQueue(e, queue)) why.push(`лежит в «${ownQueueName(e)}», а выбрана «${QUEUE_NAMES[queue] || queue}»`);
+  if (!inPreset(e, preset)) why.push(`не проходит фокус «${PRESET_NAMES[preset] || preset}»`);
+  if (!matchWho(e)) why.push('не проходит «От кого»');
+  if (!matchKind(e)) why.push('не проходит «Тип»');
+  const q = ($('q').value || '').trim();
+  if (q) {
+    const hay = (e.subject + ' ' + e.senderName + ' ' + (e.senderEmail||'') + ' ' + gist(e)).toLowerCase();
+    if (!hay.includes(q.toLowerCase())) why.push(`не находит поиск «${q}»`);
+  }
+  return why;
+}
+
+/* Пересобирает содержимое окна. Разделы: сначала не вошедшие (красные) —
+   именно их «не хватает», затем вошедшие (зелёные). */
+function buildCountPop() {
+  const list = $('countPopList');
+  if (!list) return;
+  const nw = emails.filter(e => !e.isRead);
+  const inRows = new Set(visible().filter(e => !e.isRead).map(key));
+  const entered = [], skipped = [];
+  for (const e of nw) (inRows.has(key(e)) ? entered : skipped).push(e);
+  const byNew = arr => arr.slice().sort((a, b) => (parseDate(b) || 0) - (parseDate(a) || 0));
+
+  const item = (e, kind) => {
+    const k = key(e);
+    const reasons = kind === 'out'
+      ? (hiddenReasons(e).length ? hiddenReasons(e).join(' · ') : 'скрыто фильтрами')
+      : 'в подборке — видно в списке';
+    return `<div class="cpp-item ${kind}" data-k="${k}">
+      <span class="cpp-bar"></span>
+      <div class="cpp-body">
+        <div class="cpp-row1"><span class="cpp-who">${esc(e.senderName || '?')}</span>
+          <span class="cpp-when">${shortTime(e)}</span></div>
+        <div class="cpp-subj">${esc(e.subject || '(без темы)')}</div>
+        <div class="cpp-reason">${esc(reasons)}</div>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  if (!nw.length) {
+    html = '<div class="cpp-empty">Новых писем нет.</div>';
+  } else {
+    if (skipped.length) html += `<div class="cpp-sec out"><b>Не вошли в подборку — ${skipped.length}</b></div>`
+      + byNew(skipped).map(e => item(e, 'out')).join('');
+    if (entered.length) html += `<div class="cpp-sec in"><b>Вошли в подборку — ${entered.length}</b></div>`
+      + byNew(entered).map(e => item(e, 'in')).join('');
+  }
+  list.innerHTML = html;
+  $('countPopTitle').textContent =
+    `${bySync() ? 'Новые письма' : 'Непрочитанные'}: ${nw.length} всего · в подборке ${entered.length} · вне ${skipped.length}`;
+  const foot = $('countPopFoot');
+  if (foot) {
+    foot.innerHTML = skipped.length
+      ? '<button class="btn sm" onclick="showOnlyUnread(\'all\')">Показать все новые в списке</button>'
+      : '';
+    foot.style.display = skipped.length ? '' : 'none';
+  }
+}
+
+/* Окно плавает под счётчиком. Если справа не хватает места (узкое окно),
+   прижимаем его правым краем к краю экрана. */
+function openCountPop() {
+  const c = $('count'), pop = $('countPop');
+  countPopOpen = true;
+  buildCountPop();
+  pop.classList.add('show');
+  c.setAttribute('aria-pressed', 'true');
+  const left = Math.min(-4, window.innerWidth - 14 - pop.offsetWidth - c.getBoundingClientRect().left);
+  pop.style.left = left + 'px';
+}
+function closeCountPop() {
+  if (!countPopOpen) return;
+  countPopOpen = false;
+  const pop = $('countPop'); if (pop) pop.classList.remove('show');
+  const c = $('count'); if (c) c.removeAttribute('aria-pressed');
+}
+function toggleCountPop() {
+  if (countPopOpen) closeCountPop(); else openCountPop();
+}
+
+/* Клик по письму в окне: сбрасываем фильтры (письмо могло быть скрыто
+   очередью/фокусом/отправителем/типом/поиском) и открываем его. */
+function countPopClick(ev) {
+  const it = ev.target.closest('.cpp-item');
+  if (!it) return;
+  const k = it.dataset.k;
+  closeCountPop();
+  const e = byKey(k); if (!e) return;
+  /* Письмо уже в списке — только выделяем и прокручиваем к нему, не трогая
+     фильтры пользователя. */
+  if (visible().some(x => key(x) === k)) { select(k); return; }
+  /* Скрытое фильтрами письмо открываем после сброса очереди/фокуса/
+     отправителя/типа/поиска, чтобы оно гарантированно появилось в списке. */
+  onlyUnread = false;
+  queue = 'all'; preset = 'any';
+  const w = $('whoSel'), kk = $('kindSel');
+  if (w) w.value = 'any';
+  if (kk) kk.value = 'any';
+  $('q').value = '';
+  syncFilterButtons();
+  select(k);
+}
+
+/* Клик вне окна или по самому счётчику не закрывает по ошибке: если клик
+   пришёлся не внутрь окна и не на счётчик — закрываем. */
+document.addEventListener('click', ev => {
+  if (!countPopOpen) return;
+  const t = ev.target;
+  if (t.closest('#countPop') || t === $('count')) return;
+  closeCountPop();
+});
+
 /* ═══════════════ ОТРИСОВКА ═══════════════ */
 function render() {
   syncFocusBar();
@@ -1618,9 +1806,12 @@ function render() {
   const hiddenNew = nUnread - rowsNew;
   $('count').title = nUnread > 0
     ? (hiddenNew > 0
-        ? `${nUnread} новых писем с прошлого сбора: видно ${rowsNew}, ещё ${hiddenNew} скрыто очередью или фильтрами. Откройте «Новые письма».`
-        : `${nUnread} новых писем с прошлого сбора — все видны в списке.`)
+        ? `${nUnread} новых писем с прошлого сбора: видно ${rowsNew}, ещё ${hiddenNew} скрыто очередью или фильтрами. Нажмите — покажу списком, какие вошли в подборку, а какие нет.`
+        : `${nUnread} новых писем с прошлого сбора — все видны в списке. Нажмите, чтобы посмотреть список.`)
     : '';
+  /* Кликабельность и подпись про клик — только когда есть что показать. */
+  $('count').classList.toggle('clickable', nUnread > 0);
+  if (countPopOpen) buildCountPop();
 
   const list = $('list');
   if (!total) {
@@ -2136,7 +2327,7 @@ async function saveSettings() {
 
 /* ═══════════════ КЛАВИАТУРА ═══════════════ */
 document.addEventListener('keydown', ev => {
-  if (ev.key === 'Escape') { closeReply(); closeSettings(); return; }
+  if (ev.key === 'Escape') { closeCountPop(); closeReply(); closeSettings(); return; }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && $('replyModal').classList.contains('show')) submitReply();
     return;

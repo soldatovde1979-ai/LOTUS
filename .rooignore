@@ -2,4 +2,3 @@
 secrets/
 *.env
 COPY/
-data/logs/
