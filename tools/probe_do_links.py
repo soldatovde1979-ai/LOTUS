@@ -7,11 +7,14 @@
 попадает в do_url.
 
 Запуск (из корня проекта, рядом с notes_gemini.py):
-    python scripts/probe_do_links.py                # свежие письма с упоминанием 1С:ДО
-    python scripts/probe_do_links.py <UNID>         # конкретный документ
+    python tools/probe_do_links.py                # свежие письма с упоминанием 1С:ДО
+    python tools/probe_do_links.py <UNID>         # конкретный документ
 
 Скрипт только читает и печатает — ничего не меняет. Вывод можно копировать
 целиком, если фикс не сработал.
+
+Версия 1.1 от 08.09.2026: перенесён из scripts/ в tools/, пути запуска в
+описании обновлены (v1.0 — исходный вариант в scripts/).
 """
 
 import os
