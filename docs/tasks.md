@@ -4,6 +4,7 @@
 
 ## Срочно
 
+- [ ] **Gemini: вставить настоящий API-ключ** в `set.ini` → `[GOOGLE] api_key` (сейчас плейсхолдер) и проверить: `python tools\gemini_probe.py`. Провайдер уже переключён (`[AI] provider = google`), сетевой доступ к `generativelanguage.googleapis.com` есть (проверено 08.09.2026).
 - [ ] обновить rules.md — актуализировать память правил и уроков проекта.
 
 ## Бэклог

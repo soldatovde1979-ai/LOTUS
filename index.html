@@ -2207,6 +2207,13 @@ function openSettings() {
   v('sBatch', cfg.batch_size ?? 15);
   v('sUrl', cfg.base_url || 'https://api.deepseek.com');
   v('sModel', cfg.model || 'deepseek-chat');
+  if (cfg.provider === 'google') {
+    $('sUrl').readOnly = true;
+    $('sUrl').title = 'Адрес API для Google фиксирован';
+  } else {
+    $('sUrl').readOnly = false;
+    $('sUrl').title = '';
+  }
   v('sBlock', cfg.subject_block ?? 'принято, отклонено');
   v('sKey', '');
   $('sKeyHint').textContent = cfg.api_key_set
@@ -2236,12 +2243,12 @@ function openSettings() {
 }
 function closeSettings() { $('settingsModal').classList.remove('show'); dropFocus(); }
 
-/* Баланс аккаунта DeepSeek: GET /user/balance. Показываем рядом с ключом API.
-   Если endpoint недоступен (свой прокси), спокойно сообщаем об этом. */
+/* Баланс аккаунта (DeepSeek: GET /user/balance; у Google недоступен).
+   Если endpoint недоступен, спокойно сообщаем об этом. */
 async function loadBalance() {
   const el = $('sBalance');
   if (!el) return;
-  el.textContent = 'Проверяю баланс DeepSeek…';
+  el.textContent = 'Проверяю баланс…';
   try {
     const r = await fetch('/api/balance');
     const d = await r.json();
@@ -2256,7 +2263,7 @@ async function loadBalance() {
     const parts = [];
     if (bi.granted_balance && Number(bi.granted_balance) > 0) parts.push(`из них бесплатно ${bi.granted_balance}`);
     if (bi.topped_up_balance && Number(bi.topped_up_balance) > 0) parts.push(`пополнено ${bi.topped_up_balance}`);
-    el.textContent = `Баланс DeepSeek: ${total}${cur}` + (parts.length ? ' · ' + parts.join(', ') : '');
+    el.textContent = `Баланс: ${total}${cur}` + (parts.length ? ' · ' + parts.join(', ') : '');
   } catch (err) {
     el.textContent = 'Баланс недоступен: ' + err.message;
   }

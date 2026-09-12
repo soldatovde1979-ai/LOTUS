@@ -36,6 +36,34 @@ ANALYSIS_LOCK = threading.Lock()
 # Как именно удалось определить прочитанность в последнем сборе (уходит в UI)
 READ_DETECTION = {"method": "none", "reliable": False, "detail": "", "candidates": {}}
 
+# Адрес владельца ящика из окружения Notes. Заполняется при сборе почты и
+# нужен AI-триажу для правила «письмо мне + VIP в копии».
+MY_EMAIL = ""
+
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def ai_settings():
+    """Настройки активного AI-провайдера из [AI] provider (google|deepseek).
+
+    Возвращает dict: provider, api_key, model, base_url. Для google base_url
+    фиксирован (Gemini REST), для deepseek берётся из [DEEPSEEK]."""
+    cfg = load_config()
+    provider = cfg.get("AI", "provider", fallback="deepseek").strip().lower()
+    if provider == "google":
+        return {
+            "provider": "google",
+            "api_key": cfg.get("GOOGLE", "api_key", fallback="").strip(),
+            "model": cfg.get("GOOGLE", "model", fallback="gemini-2.0-flash").strip(),
+            "base_url": GEMINI_API_URL,
+        }
+    return {
+        "provider": "deepseek",
+        "api_key": cfg.get("DEEPSEEK", "api_key", fallback="").strip(),
+        "model": cfg.get("DEEPSEEK", "model", fallback="deepseek-chat").strip(),
+        "base_url": cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/"),
+    }
+
 
 def load_config():
     config = configparser.ConfigParser(interpolation=None)
@@ -80,6 +108,21 @@ def extract_sender_email(doc):
         except Exception:
             pass
     return None
+
+
+def doc_recipients(doc, item_name):
+    """Получатели письма (SendTo/CopyTo) списком строк — для AI-триажа."""
+    out = []
+    if not doc.HasItem(item_name):
+        return out
+    try:
+        for val in doc.GetItemValue(item_name):
+            s = str(val).strip()
+            if s:
+                out.append(s[:160])
+    except Exception:
+        pass
+    return out[:12]
 
 
 def build_name_email_mapping(emails_data):
@@ -1489,6 +1532,24 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
         print(f"[!] Ошибка БД: {db_err}")
         return []
 
+    # Свой адрес из окружения Notes — AI-триажу нужно отличать «письмо мне».
+    # Источники те же, что у получателя письма-сводки (send_filtered_digest).
+    global MY_EMAIL
+    MY_EMAIL = ""
+    for env_name in ("MailAddress", "MailAddr"):
+        try:
+            val = str(session.GetEnvironmentString(env_name, True) or "").strip()
+            if val:
+                MY_EMAIL = val
+                break
+        except Exception:
+            pass
+    if not MY_EMAIL:
+        try:
+            MY_EMAIL = str(session.UserName or "").strip()
+        except Exception:
+            MY_EMAIL = ""
+
     resolver = ReadResolver(db, session)
 
     replica_id = str(db.ReplicaID).replace(":", "").strip()
@@ -1617,6 +1678,8 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
                 "dateIso": to_iso(delivered),
                 "senderName": clean_sender_name(sender),
                 "senderEmail": sender_email or "",
+                "to": doc_recipients(doc, "SendTo"),
+                "cc": doc_recipients(doc, "CopyTo"),
                 "subject": str(subject),
                 "isRead": True,
                 "readKnown": True,
@@ -1844,30 +1907,64 @@ def set_docs_read_status(unids, read_state=True):
 #  СВОДКА И ЧАТ ПО ПОЧТЕ
 # ============================================================================
 
-def ask_model(messages, temperature=0.2, timeout=180.0, expect_json=True):
-    """Один запрос к модели. Возвращает (данные|текст, ошибка)."""
-    cfg = load_config()
-    api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
-    base_url = cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/")
-    model = cfg.get("DEEPSEEK", "model", fallback="deepseek-chat").strip()
-    if not api_key:
-        return None, "не задан ключ API в настройках"
+def _call_gemini(ai, messages, temperature, timeout):
+    """Один запрос к Gemini REST (generateContent). Возвращает текст ответа.
 
-    payload = {"model": model, "messages": messages,
-               "temperature": temperature, "stream": False}
+    messages -> contents (user/model), system-сообщение -> systemInstruction."""
+    system_parts = []
+    contents = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = str(m.get("content", "") or "")
+        if role == "system":
+            system_parts.append(content)
+        else:
+            contents.append({"role": "model" if role == "assistant" else "user",
+                             "parts": [{"text": content}]})
+    payload = {"contents": contents,
+               "generationConfig": {"temperature": temperature}}
+    if system_parts:
+        payload["systemInstruction"] = {"parts": [{"text": "\n\n".join(system_parts)}]}
+    req = urllib.request.Request(
+        f"{ai['base_url']}/models/{ai['model']}:generateContent?key={ai['api_key']}",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+
+def ask_model(messages, temperature=0.2, timeout=180.0, expect_json=True):
+    """Один запрос к модели активного провайдера. Возвращает (данные|текст, ошибка)."""
+    ai = ai_settings()
+    if not ai["api_key"]:
+        return None, "не задан ключ API в настройках"
+    if any(ord(c) > 127 for c in ai["api_key"]):
+        return None, ("ключ API содержит недопустимые символы (кириллица/плейсхолдер) — "
+                      f"замените [{ai['provider'].upper()}] api_key в set.ini настоящим")
+
     try:
-        req = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}",
-                     "Content-Type": "application/json"},
-            method="POST")
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        text = data["choices"][0]["message"]["content"].strip()
+        if ai["provider"] == "google":
+            text = _call_gemini(ai, messages, temperature, timeout)
+        else:
+            payload = {"model": ai["model"], "messages": messages,
+                       "temperature": temperature, "stream": False}
+            req = urllib.request.Request(
+                f"{ai['base_url']}/chat/completions",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Authorization": f"Bearer {ai['api_key']}",
+                         "Content-Type": "application/json"},
+                method="POST")
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            text = data["choices"][0]["message"]["content"].strip()
     except Exception as e:
         return None, str(e)
 
@@ -1887,14 +1984,16 @@ def ask_model(messages, temperature=0.2, timeout=180.0, expect_json=True):
 
 
 def fetch_balance():
-    """Остаток средств на аккаунте DeepSeek.
+    """Остаток средств на аккаунте активного AI-провайдера.
 
-    GET {base_url}/user/balance с тем же API-ключом. Возвращает (json, ошибка).
-    Если поднят прокси без этого endpoint'а — вернётся ошибка, UI покажет её
+    DeepSeek: GET {base_url}/user/balance с тем же API-ключом.
+    Google: баланс через REST недоступен — возвращается ошибка, UI покажет её
     спокойно, не ломая работу дашборда."""
-    cfg = load_config()
-    api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
-    base_url = cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/")
+    ai = ai_settings()
+    if ai["provider"] == "google":
+        return None, "для Google-провайдера баланс через API недоступен"
+    api_key = ai["api_key"]
+    base_url = ai["base_url"]
     if not api_key:
         return None, "не задан ключ API в настройках"
     try:
@@ -2073,9 +2172,10 @@ def call_ai_triage(emails, skip_system=True):
     cfg = load_config()
     e_top = cfg.get("TAGS", "e_top", fallback="")
     e_dir = cfg.get("TAGS", "e_dir", fallback="")
-    api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
-    base_url = cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/")
-    model = cfg.get("DEEPSEEK", "model", fallback="deepseek-chat").strip()
+    ai = ai_settings()
+    api_key = ai["api_key"]
+    base_url = ai["base_url"]
+    model = ai["model"]
     batch_size = cfg.getint("NOTES", "batch_size", fallback=15)
     raw_template = load_prompt_template()
 
@@ -2111,7 +2211,8 @@ def call_ai_triage(emails, skip_system=True):
         print("[i] Живых писем для AI-разбора нет")
         return emails
 
-    print(f"[*] Отправка {len(targets)} писем в DeepSeek AI пакетами по {batch_size}...")
+    print(f"[*] Отправка {len(targets)} писем в "
+          f"{'Google' if ai['provider'] == 'google' else 'DeepSeek'} AI пакетами по {batch_size}...")
 
     batches = [targets[i:i + batch_size] for i in range(0, len(targets), batch_size)]
     total_batches = len(batches)
@@ -2123,6 +2224,8 @@ def call_ai_triage(emails, skip_system=True):
             "id": e["id"],
             "sender": e["senderName"],
             "email": e.get("senderEmail", ""),
+            "to": (e.get("to") or [])[:12],
+            "cc": (e.get("cc") or [])[:12],
             "subject": e["subject"],
             "body": e["body"][:400]
         } for e in batch]
@@ -2131,26 +2234,41 @@ def call_ai_triage(emails, skip_system=True):
             .replace("[[TODAY]]", datetime.now().strftime("%Y-%m-%d (%A)"))
             .replace("[[E_TOP_LIST]]", str(e_top))
             .replace("[[E_DIR_LIST]]", str(e_dir))
+            .replace("[[MY_EMAIL]]", MY_EMAIL)
+            .replace("[[E_TOP_EMAILS]]", cfg.get("TAGS", "e_top_emails", fallback=""))
+            .replace("[[E_DIR_EMAILS]]", cfg.get("TAGS", "e_dir_emails", fallback=""))
             .replace("[[EMAIL_COUNT]]", str(len(batch)))
             .replace("[[EMAILS_PAYLOAD]]", json.dumps(prompt_payload, ensure_ascii=False, indent=2))
         )
 
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "Ты — корпоративный AI Triage ассистент. Отвечай только валидным JSON без markdown."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.1,
-            "stream": False
-        }
+        triage_system = "Ты — корпоративный AI Triage ассистент. Отвечай только валидным JSON без markdown."
+        if ai["provider"] == "google":
+            payload = {
+                "systemInstruction": {"parts": [{"text": triage_system}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1}
+            }
+            request_url = f"{base_url}/models/{model}:generateContent?key={api_key}"
+            request_headers = {"Content-Type": "application/json"}
+        else:
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": triage_system},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "stream": False
+            }
+            request_url = f"{base_url}/chat/completions"
+            request_headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
         try:
             req_data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
             req = urllib.request.Request(
-                f"{base_url}/chat/completions",
+                request_url,
                 data=req_data,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                headers=request_headers,
                 method="POST"
             )
             ctx = ssl.create_default_context()
@@ -2167,7 +2285,10 @@ def call_ai_triage(emails, skip_system=True):
                 print(f"[!] HTTP ошибка: {http_err}")
                 raise
 
-            raw_text = res_json["choices"][0]["message"]["content"].strip()
+            if ai["provider"] == "google":
+                raw_text = res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+            else:
+                raw_text = res_json["choices"][0]["message"]["content"].strip()
 
             if raw_text.startswith("```"):
                 raw_text = re.sub(r'^```(?:json)?\s*', '', raw_text)
@@ -2291,7 +2412,8 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/settings":
             cfg = load_config()
-            api_key = cfg.get("DEEPSEEK", "api_key", fallback="").strip()
+            ai = ai_settings()
+            api_key = ai["api_key"]
             data = {
                 "e_top": cfg.get("TAGS", "e_top", fallback=""),
                 "e_dir": cfg.get("TAGS", "e_dir", fallback=""),
@@ -2301,8 +2423,9 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 "max_emails": cfg.getint("NOTES", "max_emails", fallback=40),
                 "max_body_chars": cfg.getint("NOTES", "max_body_chars", fallback=800),
                 "batch_size": cfg.getint("NOTES", "batch_size", fallback=15),
-                "base_url": cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com"),
-                "model": cfg.get("DEEPSEEK", "model", fallback="deepseek-chat"),
+                "provider": ai["provider"],
+                "base_url": ai["base_url"],
+                "model": ai["model"],
                 "api_key_set": bool(api_key),
                 "api_key_hint": (api_key[:4] + "…" + api_key[-4:]) if len(api_key) > 10 else "",
                 "mark_read_on_done": cfg.getboolean("UI", "mark_read_on_done", fallback=True),
@@ -2402,6 +2525,15 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 digest = None
                 if emails and not skip_ai:
                     digest, _ = build_digest(emails, days)
+                elif skip_ai:
+                    # Быстрый сбор AI не вызывает. Старую сводку не затираем —
+                    # иначе окно «Сводка по почте» пропадает после «Прочитать
+                    # без AI» и не возвращается до следующего полного сбора.
+                    try:
+                        with open(DATA_FILE, "r", encoding="utf-8") as f:
+                            digest = json.load(f).get("digest")
+                    except Exception:
+                        digest = None
 
                 result = {
                     "emails": emails,
@@ -2535,13 +2667,16 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                             self.send_json(400, {"error": f"поле «{key}» должно быть числом"})
                             return
 
-                if "base_url" in req_data:
-                    put("DEEPSEEK", "base_url", str(req_data["base_url"]).strip().rstrip("/"))
+                ai = ai_settings()
+                ai_section = "GOOGLE" if ai["provider"] == "google" else "DEEPSEEK"
+                # base_url для Google фиксирован — значение формы не сохраняем
+                if "base_url" in req_data and ai_section == "DEEPSEEK":
+                    put(ai_section, "base_url", str(req_data["base_url"]).strip().rstrip("/"))
                 if "model" in req_data:
-                    put("DEEPSEEK", "model", str(req_data["model"]).strip())
+                    put(ai_section, "model", str(req_data["model"]).strip())
                 # пустой ключ означает «не менять», а не «стереть»
                 if str(req_data.get("api_key", "")).strip():
-                    put("DEEPSEEK", "api_key", str(req_data["api_key"]).strip())
+                    put(ai_section, "api_key", str(req_data["api_key"]).strip())
 
                 if "mark_read_on_done" in req_data:
                     put("UI", "mark_read_on_done", "True" if req_data["mark_read_on_done"] else "False")
