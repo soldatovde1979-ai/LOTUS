@@ -3,12 +3,9 @@ chcp 65001 >nul
 title Restart notes_gemini
 
 
-echo Stopping old process...
-cd c:\Projects\LOTUS
-powershell -Command "Get-Process py -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*notes_gemini*' -or $_.Path -like '*python*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
-
-
 echo Starting notes_gemini...
+cd c:\Projects\LOTUS
+rem Прошлый экземпляр сервер останавливает сам (kill_stale_server в notes_gemini.py)
 start "" powershell -NoExit -Command "py notes_gemini.py"
 
 

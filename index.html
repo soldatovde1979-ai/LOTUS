@@ -775,7 +775,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         <div class="grid2">
           <div class="field">
             <label for="sModel">Модель</label>
-            <input type="text" id="sModel" placeholder="deepseek-chat">
+            <input type="text" id="sModel" placeholder="pro">
           </div>
           <div class="field">
             <label for="sBatch">Писем в одном запросе</label>
@@ -784,7 +784,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         </div>
         <div class="field">
           <label for="sUrl">Адрес API</label>
-          <input type="text" id="sUrl" placeholder="https://api.deepseek.com">
+          <input type="text" id="sUrl" placeholder="http://127.0.0.1:8787/v1">
         </div>
         <div class="field">
           <label for="sKey">Ключ API</label>
@@ -2205,8 +2205,8 @@ function openSettings() {
   v('sMax', cfg.max_emails ?? 40);
   v('sChars', cfg.max_body_chars ?? 800);
   v('sBatch', cfg.batch_size ?? 15);
-  v('sUrl', cfg.base_url || 'https://api.deepseek.com');
-  v('sModel', cfg.model || 'deepseek-chat');
+  v('sUrl', cfg.base_url || 'http://127.0.0.1:8787/v1');
+  v('sModel', cfg.model || 'pro');
   if (cfg.provider === 'google') {
     $('sUrl').readOnly = true;
     $('sUrl').title = 'Адрес API для Google фиксирован';
@@ -2243,7 +2243,7 @@ function openSettings() {
 }
 function closeSettings() { $('settingsModal').classList.remove('show'); dropFocus(); }
 
-/* Баланс аккаунта (DeepSeek: GET /user/balance; у Google недоступен).
+/* Баланс аккаунта (GET /user/balance; у Google и шлюза OpenCoder недоступен).
    Если endpoint недоступен, спокойно сообщаем об этом. */
 async function loadBalance() {
   const el = $('sBalance');

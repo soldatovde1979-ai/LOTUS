@@ -7,6 +7,8 @@ import configparser
 import urllib.request
 import urllib.error
 import ssl
+import subprocess
+import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from datetime import datetime, timedelta
 import win32com.client
@@ -44,12 +46,12 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 
 def ai_settings():
-    """Настройки активного AI-провайдера из [AI] provider (google|deepseek).
+    """Настройки активного AI-провайдера из [AI] provider (google|opencoder).
 
     Возвращает dict: provider, api_key, model, base_url. Для google base_url
-    фиксирован (Gemini REST), для deepseek берётся из [DEEPSEEK]."""
+    фиксирован (Gemini REST), для opencoder берётся из [OPENCODER]."""
     cfg = load_config()
-    provider = cfg.get("AI", "provider", fallback="deepseek").strip().lower()
+    provider = cfg.get("AI", "provider", fallback="opencoder").strip().lower()
     if provider == "google":
         return {
             "provider": "google",
@@ -58,10 +60,10 @@ def ai_settings():
             "base_url": GEMINI_API_URL,
         }
     return {
-        "provider": "deepseek",
-        "api_key": cfg.get("DEEPSEEK", "api_key", fallback="").strip(),
-        "model": cfg.get("DEEPSEEK", "model", fallback="deepseek-chat").strip(),
-        "base_url": cfg.get("DEEPSEEK", "base_url", fallback="https://api.deepseek.com").strip().rstrip("/"),
+        "provider": "opencoder",
+        "api_key": cfg.get("OPENCODER", "api_key", fallback="").strip(),
+        "model": cfg.get("OPENCODER", "model", fallback="pro").strip(),
+        "base_url": cfg.get("OPENCODER", "base_url", fallback="http://127.0.0.1:8787/v1").strip().rstrip("/"),
     }
 
 
@@ -1986,12 +1988,13 @@ def ask_model(messages, temperature=0.2, timeout=180.0, expect_json=True):
 def fetch_balance():
     """Остаток средств на аккаунте активного AI-провайдера.
 
-    DeepSeek: GET {base_url}/user/balance с тем же API-ключом.
-    Google: баланс через REST недоступен — возвращается ошибка, UI покажет её
-    спокойно, не ломая работу дашборда."""
+    Шлюз OpenCoder и Google: баланс через REST недоступен — возвращается
+    ошибка, UI покажет её спокойно, не ломая работу дашборда."""
     ai = ai_settings()
     if ai["provider"] == "google":
         return None, "для Google-провайдера баланс через API недоступен"
+    if ai["provider"] == "opencoder":
+        return None, "для OpenCoder-шлюза баланс через API недоступен"
     api_key = ai["api_key"]
     base_url = ai["base_url"]
     if not api_key:
@@ -2212,7 +2215,7 @@ def call_ai_triage(emails, skip_system=True):
         return emails
 
     print(f"[*] Отправка {len(targets)} писем в "
-          f"{'Google' if ai['provider'] == 'google' else 'DeepSeek'} AI пакетами по {batch_size}...")
+          f"{'Google' if ai['provider'] == 'google' else 'OpenCoder'} AI пакетами по {batch_size}...")
 
     batches = [targets[i:i + batch_size] for i in range(0, len(targets), batch_size)]
     total_batches = len(batches)
@@ -2442,7 +2445,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
             self.send_json(200, data)
 
         elif self.path.split("?")[0] == "/api/balance":
-            # Остаток средств на аккаунте DeepSeek (GET /user/balance)
+            # Остаток средств на аккаунте AI-провайдера (шлюз OpenCoder и Google баланс не отдают)
             data, err = fetch_balance()
             if err:
                 self.send_json(502, {"error": err})
@@ -2638,7 +2641,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/save-settings":
             try:
                 cfg = load_config()
-                for sec in ("TAGS", "NOTES", "DEEPSEEK", "UI"):
+                for sec in ("TAGS", "NOTES", "OPENCODER", "UI"):
                     ensure_section(cfg, sec)
 
                 def put(section, opt, val):
@@ -2668,9 +2671,9 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                             return
 
                 ai = ai_settings()
-                ai_section = "GOOGLE" if ai["provider"] == "google" else "DEEPSEEK"
+                ai_section = "GOOGLE" if ai["provider"] == "google" else "OPENCODER"
                 # base_url для Google фиксирован — значение формы не сохраняем
-                if "base_url" in req_data and ai_section == "DEEPSEEK":
+                if "base_url" in req_data and ai_section == "OPENCODER":
                     put(ai_section, "base_url", str(req_data["base_url"]).strip().rstrip("/"))
                 if "model" in req_data:
                     put(ai_section, "model", str(req_data["model"]).strip())
@@ -2783,11 +2786,50 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
 
 
+def kill_stale_server(port):
+    """Останавливает прошлый экземпляр этого сервера, слушающий порт.
+
+    Повторный запуск без этого давал два процесса на одном порту (Windows с
+    SO_REUSEADDR это позволяет) и неработающий сервер. Посторонний процесс
+    на порту не трогаем — сообщаем и выходим."""
+    def listeners():
+        out = subprocess.run(["netstat", "-ano"], capture_output=True,
+                             text=True, timeout=15).stdout
+        found = set()
+        for line in out.splitlines():
+            p = line.split()
+            if len(p) == 5 and p[1].endswith(f":{port}") and p[3] == "LISTENING":
+                found.add(p[4])
+        return found
+
+    me = str(os.getpid())
+    for pid in listeners():
+        if pid == me:
+            continue
+        cmdline = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"],
+            capture_output=True, text=True, timeout=30).stdout.lower()
+        if "notes_gemini.py" not in cmdline:
+            print(f"[!] Порт {port} занят посторонним процессом (PID {pid}) — "
+                  f"сервер не запущен. Освободите порт и запустите снова.")
+            sys.exit(1)
+        subprocess.run(["taskkill", "/F", "/PID", pid],
+                       capture_output=True, timeout=15)
+        print(f"[*] Остановлен прошлый экземпляр сервера (PID {pid})")
+    time.sleep(0.5)
+    stale = listeners() - {me}
+    if stale:
+        print(f"[!] Не удалось освободить порт {port} (PID {', '.join(stale)})")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     import sys
     PORT = 8765
     if len(sys.argv) > 1 and sys.argv[1].lstrip('-').isdigit():
         PORT = int(sys.argv[1])
+    kill_stale_server(PORT)
     server = HTTPServer(("127.0.0.1", PORT), NotesWebHandler)
     print(f"[*] Smart Mail Dashboard запущен: http://127.0.0.1:{PORT}")
     try:

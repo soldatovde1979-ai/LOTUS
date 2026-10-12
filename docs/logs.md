@@ -8,6 +8,13 @@
 
 ---
 
+## 2026-10-12 12:23 — [feat] Переход AI-провайдера с DeepSeek на OpenCoder
+
+- **ЧТО:** `set.ini` — `[AI] provider = opencoder`, новая секция `[OPENCODER]` (base_url `http://127.0.0.1:8787/v1` — локальный gw-proxy из `C:\OpenCoder\ZOO`, api_key `local`, model `pro`); секция `[DEEPSEEK]` оставлена для отката. `notes_gemini.py` — `ai_settings()` читает секцию `[OPENCODER]` (дефолты: модель `pro`, base_url `http://127.0.0.1:8787/v1`); `fetch_balance()` для opencoder сообщает о недоступности баланса; сохранение настроек пишет в секцию `OPENCODER`; добавлен тест `tests/test_ai_settings.py` (unittest). `index.html`, `examples/demo.html` — плейсхолдеры и дефолты формы настроек (`pro`, `http://127.0.0.1:8787/v1`). Доки: `spec.md`, `data.md`, `состояния.md`.
+- **ПОЧЕМУ:** DeepSeek API заменён на корпоративный шлюз OpenCoder (модели `pro`/`flash` через локальный OpenAI-совместимый прокси gw-proxy с устройственным ключом); протокол `/chat/completions` совпадает, поэтому меняется только конфигурация.
+
+---
+
 ## 2026-09-12 19:55 — [fix] Сводка не пропадает после быстрого сбора; правило «письмо мне + VIP в копии»
 
 - **ЧТО:** `notes_gemini.py` — (1) `/api/analyze` при быстром сборе (`skip_ai=True`) больше не затирает сводку: предыдущий `digest` перечитывается из `dashboard_data.json`, окно «Сводка по почте» остаётся на экране; (2) в сбор писем добавлены поля `to`/`cc` — хелпер `doc_recipients()` читает `SendTo`/`CopyTo` (до 12 получателей по 160 симв.); (3) в payload AI-триажа добавлены `to`/`cc`, в шаблон `promt-get-post.txt` — плейсхолдеры `[[MY_EMAIL]]`, `[[E_TOP_EMAILS]]`, `[[E_DIR_EMAILS]]`; адрес владельца ящика берётся при сборе из `MailAddress`/`MailAddr`/`UserName` (глобальная `MY_EMAIL`); (4) в `promt-get-post.txt` добавлено правило: письмо владельцу с VIP (E_TOP/E_DIR) в копии → priority P1, risk high, waiting_on "me".

@@ -8,14 +8,22 @@
 
 ```ini
 [AI]
-provider = deepseek # Активный провайдер (влияет на маршрутизацию API в будущем)
+provider = opencoder # Активный провайдер (влияет на маршрутизацию API в будущем)
 
 [GOOGLE]
 api_key = AIzaSy... # Ключ для Gemini
 model = gemini-3.7-flash
 temperature = 0.2
 
+[OPENCODER]
+# Шлюз OpenCoder через локальный gw-proxy (OpenAI-совместимый протокол)
+api_key = local # Пароль локального эндпойнта, реальная авторизация — устройственным ключом
+model = pro # Или flash — быстрая модель
+base_url = http://127.0.0.1:8787/v1 # Локальный прокси gw-proxy.mjs (см. C:\OpenCoder\ZOO)
+temperature = 0.2
+
 [DEEPSEEK]
+# Старый провайдер; для отката указать [AI] provider = deepseek
 api_key = sk-... # Ключ для DeepSeek
 model = deepseek-chat
 base_url = https://api.deepseek.com
@@ -43,6 +51,40 @@ skip_ai_for_system = True # Автоматику не гонять через AI
 subject_block = принято, отклонено # Фильтр тем (служебные ответы)
 auto_done_days = 1 # «Отработать все»: закрывать письма старше этого срока (в днях)
 ```
+
+## 1.1. Способы доступа к почте (проверено probe_traveler.py, 08.10.2026)
+
+Диагностика [`tools/probe_traveler.py`](../tools/probe_traveler.py) подтвердила:
+
+| Параметр | Значение |
+|---|---|
+| HTTP-сервер (443) | `traveler.svo.aero` (IP 109.70.253.165), TLS GlobalSign, валиден до 04.11.2026 |
+| Аутентификация | HTTP Basic работает (интернет-пароль ≠ пароль клиента Notes) |
+| Почтовый сервер | `CN=Mail8/O=svo` (hostname `Mail8` / `mail8.svo.aero` наружу не резолвится) |
+| Почтовый файл | `mail\desoldatov.nsf` (ReplicaID `43258A46003E57B4`) |
+| DDS `/api/notes` | На traveler присутствует (401 без логина), но **база на traveler не открыта** (404) — почта живёт на Mail8 |
+| IMAP/POP3 (143/993/110), DIIOP (63148) | Закрыты |
+
+**Вывод: сбор писем по HTTPS без клиента невозможен** — traveler отдаёт только
+синхронизацию мобильных устройств и адресную книгу; почтовая база пользователя
+на HTTP-сервере не опубликована. Открытие доступа = задача администратора Domino
+(опубликовать mail-файл на HTTP-сервере или включить iNotes/DDS-маршрутизацию).
+Пока доступен только текущий путь: COM-клиент Lotus Notes.
+
+### Рабочий способ получить письма и календарь (проверено 08.10.2026)
+
+Единственный программный путь — COM-мост к клиенту Notes (NRPC:1352 до Mail8):
+
+- письма: `GetDatabase("CN=Mail8/O=svo", "mail\desoldatov.nsf")` → вид `($Inbox)`
+  → `GetNthDocument(i)` → поля `PostedDate`, `From`, `Subject`, `Body.Text`;
+- календарь: вид `($Calendar)` → те же поля + `StartDateTime`, `EndDateTime`,
+  `Chair`, `Location`, `AppointmentType`;
+- проверено на живой базе: 1832 письма, 2340 событий; итерация только через
+  `GetNthDocument` (`GetNextDocument` в gen_py не работает);
+- из дома работает только через VPN до `mail.svo.aero` (192.168.75.69:1352);
+  traveler базы по NRPC не отдаёт (`IsOpen=False` для любых баз).
+
+Полная явная инструкция с кодом: [docs/получение-писем-и-календаря.md](получение-писем-и-календаря.md).
 
 ### Lifecycle полей e_top_emails / e_dir_emails
 1. При вызове `GET /api/settings` значения считываются из `set.ini` и возвращаются на фронтенд.
@@ -140,9 +182,11 @@ System-промпт из `promt-chat-post.txt`; единственный пле�
 ### 3.3. Сводка (digest_template.txt)
 Шаблон сводки подставляет `[[TODAY]]`, `[[PERIOD]]`, `[[EMAIL_COUNT]]`, `[[E_TOP_LIST]]`, `[[E_DIR_LIST]]`, `[[EMAILS_PAYLOAD]]`. Отработанные (`done`) письма из сводки **исключаются** — сводка строится только по активным.
 
-## 4. Баланс DeepSeek
-`GET /api/balance` → запрос `{base_url}/user/balance` с тем же API-ключом. Возвращает `is_available` и `balance_infos[]`:
+## 4. Баланс провайдера
+`GET /api/balance` → запрос `{base_url}/user/balance` с тем же API-ключом (только провайдер `deepseek`). Возвращает `is_available` и `balance_infos[]`:
 - `currency` — валюта (обычно USD/CNY);
 - `total_balance` — остаток всего;
 - `granted_balance` — бесплатная часть;
 - `topped_up_balance` — пополненная часть.
+
+Для шлюза OpenCoder и Google баланс через API недоступен — UI спокойно сообщает об этом.

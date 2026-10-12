@@ -624,7 +624,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         <div class="grid2">
           <div class="field">
             <label for="sModel">Модель</label>
-            <input type="text" id="sModel" placeholder="deepseek-chat">
+            <input type="text" id="sModel" placeholder="pro">
           </div>
           <div class="field">
             <label for="sBatch">Писем в одном запросе</label>
@@ -633,7 +633,7 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
         </div>
         <div class="field">
           <label for="sUrl">Адрес API</label>
-          <input type="text" id="sUrl" placeholder="https://api.deepseek.com">
+          <input type="text" id="sUrl" placeholder="http://127.0.0.1:8787/v1">
         </div>
         <div class="field">
           <label for="sKey">Ключ API</label>
@@ -1018,8 +1018,8 @@ kbd { font-family:var(--mono); font-size:10.5px; padding:1px 5px; border:1px sol
                   'as.abakumova@svo.su, as.kalacheva@svo.su, ki.eremin@svo.su',
     default_days: 4,
     max_emails: 40, max_body_chars: 800, batch_size: 15,
-    base_url: 'https://api.deepseek.com', model: 'deepseek-chat',
-    api_key_set: true, api_key_hint: 'sk-1…9f2c',
+    base_url: 'http://127.0.0.1:8787/v1', model: 'pro',
+    api_key_set: true, api_key_hint: 'loc…al',
     skip_weekends: true, skip_ai_for_system: true, subject_block: 'принято, отклонено',
     mark_read_on_done: true,
     read_detection: { method: 'doc.GetRead()', reliable: true, detail: 'CN=Demo User/O=SVO' }
@@ -2046,8 +2046,8 @@ function openSettings() {
   v('sMax', cfg.max_emails ?? 40);
   v('sChars', cfg.max_body_chars ?? 800);
   v('sBatch', cfg.batch_size ?? 15);
-  v('sUrl', cfg.base_url || 'https://api.deepseek.com');
-  v('sModel', cfg.model || 'deepseek-chat');
+  v('sUrl', cfg.base_url || 'http://127.0.0.1:8787/v1');
+  v('sModel', cfg.model || 'pro');
   v('sBlock', cfg.subject_block ?? 'принято, отклонено');
   v('sKey', '');
   $('sKeyHint').textContent = cfg.api_key_set
