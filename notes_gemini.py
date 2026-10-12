@@ -1354,6 +1354,7 @@ def backfill_do_urls(emails):
     пытается вытащить do_url для писем, где задача документооборота упоминается,
     а адрес пуст. Возвращает, сколько ссылок удалось дозаполнить."""
     targets = [e for e in (emails or []) if not e.get("do_url")
+               and not e.get("doUrlTried")
                and e.get("unid")
                and mentions_do_task(e.get("subject"), e.get("body"))]
     if not targets:
@@ -1367,6 +1368,9 @@ def backfill_do_urls(emails):
         return 0
     got = 0
     for e in targets:
+        # Попытка одна на письмо: без отметки DXL-выгрузка повторялась при
+        # КАЖДОМ GET /api/data для писем, где ссылку достать нельзя (пустой ?ref).
+        e["doUrlTried"] = True
         try:
             doc = db.GetDocumentByUNID(e["unid"])
             if doc is None:
@@ -1378,7 +1382,7 @@ def backfill_do_urls(emails):
         except Exception:
             continue
     print(f"[i] Ссылок 1С:ДО дозаполнено для старых писем: {got} из {len(targets)}")
-    return got
+    return len(targets)
 
 
 def get_mail_database(session):
@@ -1523,14 +1527,16 @@ def fetch_notes_emails(days=2, max_emails=40, max_chars=800, skip_weekends=True,
         session = win32com.client.Dispatch("Lotus.NotesSession")
         session.Initialize()
     except Exception as e:
+        # Исключение, а не []: пустой список сохранялся в dashboard_data.json
+        # и стирал прошлый сбор вместе с кэшем AI-разбора.
         print(f"[!] Сбой COM: {e}")
-        return []
+        raise RuntimeError(f"Lotus Notes недоступен (COM): {e}")
 
     try:
         db = get_mail_database(session)
     except Exception as db_err:
         print(f"[!] Ошибка БД: {db_err}")
-        return []
+        raise RuntimeError(f"почтовая база Notes не открылась: {db_err}")
 
     # Свой адрес из окружения Notes — AI-триажу нужно отличать «письмо мне».
     # Источники те же, что у получателя письма-сводки (send_filtered_digest).
@@ -2080,6 +2086,10 @@ def build_digest(emails, days):
     if err:
         print(f"[!] Сводка не собралась: {err}")
         return None, err
+    if not isinstance(data, dict):
+        # модель вернула массив/строку: без проверки data.get падал, и /api/analyze
+        # терял весь уже оплаченный AI-разбор (файл не сохранялся)
+        return None, "модель вернула сводку не в формате объекта JSON"
 
     known = {str(e.get("id")) for e in active}
     watch = [w for w in (data.get("watchlist") or []) if str(w.get("id")) in known][:8]
@@ -2110,6 +2120,8 @@ def answer_question(emails, question, history=None):
     data, err = ask_model(messages, temperature=0.3, timeout=180.0)
     if err:
         return None, err
+    if not isinstance(data, dict):
+        return None, "модель вернула ответ не в формате объекта JSON"
     known = {str(e.get("id")) for e in emails}
     refs = [str(r) for r in (data.get("refs") or []) if str(r) in known][:10]
     return {"answer": str(data.get("answer", "")).strip(), "refs": refs}, None
@@ -2395,9 +2407,24 @@ def call_ai_triage(emails, skip_system=True):
     return emails
 
 
+# Статика, которую отдаёт сервер. Всё остальное из BASE_DIR (set.ini с ключами
+# API, work_state.json, исходники, docs/) раньше было доступно по прямому URL.
+STATIC_ALLOWED = {"/", "/index.html", "/dashboard_data.json", "/favicon.ico"}
+
+
 class NotesWebHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BASE_DIR, **kwargs)
+
+    def _host_ok(self):
+        """Защита от DNS-rebinding: чужой сайт, «перепривязанный» на 127.0.0.1,
+        приходит со своим Host и иначе читал бы /api/data и менял настройки."""
+        port = self.server.server_port
+        host = (self.headers.get("Host") or "").strip().lower()
+        return host in {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+    def _reject(self, status, msg):
+        self.send_json(status, {"error": msg})
 
     def log_message(self, fmt, *args):
         pass  # не засоряем консоль обращениями к статике
@@ -2410,6 +2437,9 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
+        if not self._host_ok():
+            self._reject(403, "недопустимый Host")
+            return
         if self.path == "/api/settings":
             cfg = load_config()
             ai = ai_settings()
@@ -2458,6 +2488,7 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 # «Старые» письма из кэша могли быть собраны до починки извлечения
                 # ссылок 1С:ДО — дозаполняем им do_url прямо при загрузке (один раз).
                 try:
+                    # возвращает число проверенных писем: сохраняем и отметку попытки
                     if backfill_do_urls(emails):
                         cache["emails"] = emails
                         with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -2469,13 +2500,33 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                 self.send_json(200, cache)
             except Exception:
                 self.send_json(200, {"emails": []})
-        else:
+        elif self.path.split("?")[0] in STATIC_ALLOWED:
             super().do_GET()
+        else:
+            self._reject(404, "не найдено")
 
     def do_POST(self):
+        if not self._host_ok():
+            self._reject(403, "недопустимый Host")
+            return
+        # CSRF: любая открытая в браузере страница могла слать «простой» POST
+        # (text/plain) на 127.0.0.1 — сменить base_url и увести ключ и почту,
+        # стереть данные. application/json кросс-доменно требует preflight,
+        # который сервер не разрешает; Origin, если есть, должен быть своим.
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        port = self.server.server_port
+        if ctype != "application/json" or (
+                origin and origin not in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}):
+            self._reject(403, "запрос отклонён (CSRF-защита)")
+            return
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length).decode('utf-8')
-        req_data = json.loads(body) if body else {}
+        try:
+            req_data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._reject(400, "тело запроса — не JSON")
+            return
 
         if self.path == "/api/analyze":
             if not ANALYSIS_LOCK.acquire(blocking=False):
@@ -2520,6 +2571,11 @@ class NotesWebHandler(SimpleHTTPRequestHandler):
                             skip_system=cfg.getboolean("UI", "skip_ai_for_system", fallback=True))
                         emails = refresh_overdue_flags(emails)
                     else:
+                        # Быстрый сбор не зовёт модель, но готовый разбор переносит:
+                        # иначе файл сохранялся без AI-полей, приоритеты сбрасывались,
+                        # а следующий полный сбор заново оплачивал все письма.
+                        emails = apply_ai_cache(emails, load_previous_emails())
+                        emails = refresh_overdue_flags(emails)
                         print("[i] AI-анализ пропущен по запросу (быстрый сбор)")
 
                 digest = None

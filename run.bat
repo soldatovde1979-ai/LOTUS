@@ -1,10 +1,11 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 title Restart notes_gemini
 
 
 echo Stopping old process...
-cd c:\Projects\LOTUS
+rem Run from the folder of this .bat (/d also switches drive)
+cd /d "%~dp0"
 powershell -Command "Get-Process py -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*notes_gemini*' -or $_.Path -like '*python*' } | Stop-Process -Force -ErrorAction SilentlyContinue"
 
 
