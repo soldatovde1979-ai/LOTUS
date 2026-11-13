@@ -1231,6 +1231,24 @@ def _rank_url(u, anchor=""):
     return r
 
 
+# Хвост разорванного 1С-адреса: Notes/1С вставляют пробелы в произвольных
+# местах («…Задача?ref = 814e…», «…Задача? ref=814e…», «…Задача?ref= 814e…»).
+# Без склейки параметр доезжает до 1С без значения — задача не открывается:
+# «Поле объекта не обнаружено (Ключ)».
+_BROKEN_TAIL_RE = re.compile(r'\s*([\w-]*)\s*=\s*([^\s<>&"\'\)\]]+)')
+# Значение без «=» — когда адрес оборван уже после знака равенства.
+_BROKEN_VALUE_RE = re.compile(r'\s*([^\s<>&"\'\)\]]+)')
+# ref присутствует, но значения нет — 1С получит пустой Ключ.
+_EMPTY_REF_RE = re.compile(r'[?&]ref(?=$|[&#])|[?&]ref=\s*(?=$|[&#])', re.I)
+
+
+def _empty_ref(url):
+    """True, если в адресе есть параметр ref без значения. Такую ссылку нельзя
+    отдавать в кнопку «Перейти в ДО»: 1С падает «Поле объекта не обнаружено
+    (Ключ)» — лучше без кнопки, чем кнопка в ошибку."""
+    return bool(_EMPTY_REF_RE.search(str(url or "")))
+
+
 def _url_pairs_from_text(text):
     """URL из обычного текста с якорным контекстом слева (~60 знаков).
     По контексту отличаем «Ссылка на задачу» от «Ссылка документ».
@@ -1239,10 +1257,23 @@ def _url_pairs_from_text(text):
     pairs = []
     for m in URL_RE.finditer(text or ""):
         url = m.group(0)
-        if url.endswith('?') or url.endswith('&'):
-            tail = re.match(r'\s+([\w-]+=[^\s<>&"\'\)\]]+)', text[m.end():])
+        rest = text[m.end():]
+        # Склеиваем разрыв в любом месте параметра: «?», «&», «=», имя без «=».
+        if url.endswith(('?', '&')):
+            tail = _BROKEN_TAIL_RE.match(rest)
+            if tail and tail.group(1):
+                # имени параметра в адресе нет — оно в хвосте
+                url += tail.group(1) + '=' + tail.group(2)
+        elif url.endswith('='):
+            tail = _BROKEN_VALUE_RE.match(rest)
             if tail:
-                url += tail.group(1).strip()
+                url += tail.group(1)
+        elif re.search(r'[?&][\w-]+$', url):
+            # адрес оборван на имени параметра («…?ref»): хвост — «=значение»,
+            # либо «…?re» + «f=значение» (пробел внутри имени)
+            tail = _BROKEN_TAIL_RE.match(rest)
+            if tail:
+                url += tail.group(1) + '=' + tail.group(2)
         start = max(0, m.start() - 60)
         pairs.append((url, text[start:m.start()]))
     return pairs
@@ -1334,6 +1365,10 @@ def extract_do_url(doc, body_text="", session=None):
         if not u or u in seen:
             continue
         seen.add(u)
+        # Ссылка с ref без значения отправит 1С в «Поле объекта не обнаружено
+        # (Ключ)» — лучше не показывать кнопку, чем вести в ошибку.
+        if _empty_ref(u):
+            continue
         r = _rank_url(u, anchor)
         # при равном ранге берём более длинную ссылку: текст может обрезать
         # адрес по пробелу, а DXL/MIME отдают полный
@@ -1355,10 +1390,12 @@ def backfill_do_urls(emails):
     до того, как извлечение ссылок было починено. Открывает Notes один раз и
     пытается вытащить do_url для писем, где задача документооборота упоминается,
     а адрес пуст. Возвращает, сколько ссылок удалось дозаполнить."""
-    targets = [e for e in (emails or []) if not e.get("do_url")
-               and not e.get("doUrlTried")
-               and e.get("unid")
-               and mentions_do_task(e.get("subject"), e.get("body"))]
+    # Ссылки с пустым ref тоже перепроверяем: в кэше они могли остаться с тех
+    # пор, когда такие адреса сохранялись (кнопка вела в ошибку 1С «Ключ»).
+    targets = [e for e in (emails or []) if e.get("unid")
+               and mentions_do_task(e.get("subject"), e.get("body"))
+               and ((not e.get("do_url") and not e.get("doUrlTried"))
+                    or _empty_ref(e.get("do_url")))]
     if not targets:
         return 0
     try:
@@ -1373,6 +1410,10 @@ def backfill_do_urls(emails):
         # Попытка одна на письмо: без отметки DXL-выгрузка повторялась при
         # КАЖДОМ GET /api/data для писем, где ссылку достать нельзя (пустой ?ref).
         e["doUrlTried"] = True
+        # Битую ссылку снимаем: если новую достать не удастся, письмо останется
+        # без кнопки, а не с кнопкой в ошибку 1С.
+        if _empty_ref(e.get("do_url")):
+            e["do_url"] = ""
         try:
             doc = db.GetDocumentByUNID(e["unid"])
             if doc is None:
