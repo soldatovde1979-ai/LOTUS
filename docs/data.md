@@ -19,7 +19,7 @@ temperature = 0.2
 # Шлюз OpenCoder через локальный gw-proxy (OpenAI-совместимый протокол)
 api_key = local # Пароль локального эндпойнта, реальная авторизация — устройственным ключом
 model = pro # Или flash — быстрая модель
-base_url = http://127.0.0.1:8787/v1 # Локальный прокси gw-proxy.mjs (см. C:\OpenCoder\ZOO)
+base_url = http://127.0.0.1:8787/v1 # Локальный прокси gw-proxy.mjs (см. C:\OpenCoder\ZOO_)
 temperature = 0.2
 
 [DEEPSEEK]
